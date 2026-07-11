@@ -2,6 +2,7 @@
 #define CTLARK__COMPILE__HPP
 
 #include "ast.hpp"
+#include "assert.hpp"
 #include "common.hpp"
 #ifndef CTLARK_IN_A_MODULE
 #include <cstddef>
@@ -196,7 +197,7 @@ template <size_t N> struct grammar_tables {
 	using lim = climits<N>;
 
 	bool ok = true;
-	char error[96]{};
+	char error[128]{};
 
 	cnode nodes[static_cast<size_t>(lim::nodes)]{};
 	int node_count = 0;
@@ -234,6 +235,20 @@ template <size_t N> struct grammar_tables {
 		ok = false;
 		size_t i = 0;
 		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
 		error[i] = '\0';
 	}
 	constexpr std::string_view error_view() const noexcept {
@@ -315,7 +330,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
 		const int s = intern(name, false);
-		if (syms[s].defined) { fail("ctlark: duplicate rule definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
 		syms[s].defined = true;
 		syms[s].bang = bang;
 		syms[s].cond = cond;
@@ -324,7 +339,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_term(std::string_view name, int prio) noexcept {
 		const int s = intern(name, true);
-		if (syms[s].defined) { fail("ctlark: duplicate terminal definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
 		syms[s].defined = true;
 		syms[s].prio = prio;
 		return s;
@@ -371,12 +386,12 @@ template <size_t N> struct grammar_tables {
 		}
 		const int root = emit_common(segs[1], *this);
 		if (root < 0) {
-			fail("ctlark: %import: not a supported common.* terminal");
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
 			return;
 		}
 		const int s = intern(alias, true);
 		if (syms[s].defined) {
-			fail("ctlark: duplicate terminal definition (%import)");
+			fail("ctlark: duplicate terminal definition (%import)", alias);
 			return;
 		}
 		syms[s].defined = true;
@@ -869,7 +884,7 @@ template <size_t N> struct grammar_tables {
 			case pk::tref: {
 				const int t = n.a;
 				if (syms[t].pattern < 0) {
-					fail("ctlark: reference to an undefined terminal");
+					fail("ctlark: reference to an undefined terminal", name_of(t));
 					return nfa_frag{0, 0};
 				}
 				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
@@ -894,9 +909,9 @@ template <size_t N> struct grammar_tables {
 	constexpr void validate() noexcept {
 		for (int i = 0; i < sym_count && ok; ++i) {
 			if (syms[i].terminal) {
-				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal"); }
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
 			} else {
-				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule"); }
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
 			}
 		}
 	}

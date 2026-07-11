@@ -21,6 +21,40 @@
 // one text node - exactly as the old semantic actions accumulated
 // them - and whitespace-only text nodes are dropped.
 
+namespace ctxml {
+
+// why the binder rejected a document that PARSES - the well-formedness
+// rules the grammar itself cannot express
+CTLL_EXPORT enum class bind_reason : unsigned char {
+	none,
+	mismatched_tag,      // a close tag does not match its open tag
+	duplicate_attribute, // the same attribute name twice in one element
+	bad_reference        // a character reference to an invalid code point
+};
+
+CTLL_EXPORT constexpr std::string_view to_string(bind_reason r) noexcept {
+	switch (r) {
+		case bind_reason::none: return "none";
+		case bind_reason::mismatched_tag: return "a close tag does not match its open tag";
+		case bind_reason::duplicate_attribute: return "duplicate attribute name in an element";
+		case bind_reason::bad_reference: return "character reference to an invalid code point";
+	}
+	return "unknown";
+}
+
+// the first binder failure: which rule broke, and the raw offending
+// token as written in the input
+CTLL_EXPORT struct bind_error_t {
+	bind_reason reason = bind_reason::none;
+	std::string_view where{};
+
+	constexpr bool ok() const noexcept {
+		return reason == bind_reason::none;
+	}
+};
+
+} // namespace ctxml
+
 namespace ctxml::detail {
 
 using bt_element = ctlark::text<'e', 'l', 'e', 'm', 'e', 'n', 't'>;
@@ -159,11 +193,14 @@ template <typename Value> struct text_piece<ctlark::token<bt_TEXT, Value>> {
 	using decoded = decode_entities<Value, 0, 0>;
 	using type = typename decoded::type;
 	static constexpr bool ok = decoded::ok;
+	static constexpr bind_error_t fail =
+		decoded::ok ? bind_error_t{} : bind_error_t{bind_reason::bad_reference, Value::view()};
 };
 template <typename Value> struct text_piece<ctlark::token<bt_CDATA, Value>> {
 	// <![CDATA[ ... ]]>
 	using type = typename strip_span<Value, 9, 3>::type;
 	static constexpr bool ok = true;
+	static constexpr bind_error_t fail{};
 };
 
 template <typename T> struct is_text_piece : std::false_type { };
@@ -189,6 +226,8 @@ template <typename Name, typename Value> struct bind_attr<ctlark::tree<bt_attr, 
 	using decoded = decode_entities<typename Value::value_type, 1, 1>;
 	using type = ctxml::attribute<name_type, typename decoded::type>;
 	static constexpr bool ok = decoded::ok;
+	static constexpr bind_error_t fail =
+		decoded::ok ? bind_error_t{} : bind_error_t{bind_reason::bad_reference, Value::value_type::view()};
 };
 
 template <typename T> struct is_attr_node : std::false_type { };
@@ -317,12 +356,79 @@ struct element_from<Open, attr_phase<AttrList, AOk, Rest...>> {
 	static constexpr bool ok = fin::ok;
 };
 
+// --- the diagnostic pass: the same checks as the ok fold, but as a
+// plain value computation that reports the FIRST failure and the raw
+// offending token (kept apart from the type-building fold so the
+// reason costs nothing unless bind_error<>() is asked for)
+
+template <typename T> struct attr_info {
+	static constexpr std::string_view name{};
+};
+template <typename N, typename V> struct attr_info<ctlark::tree<bt_attr, N, V>> {
+	static constexpr std::string_view name = N::value_type::view();
+};
+
+template <typename T> struct close_info {
+	static constexpr std::string_view raw{};
+};
+template <typename V> struct close_info<ctlark::token<bt_CLOSE, V>> {
+	static constexpr std::string_view raw = V::view();
+};
+
+template <typename K> constexpr bind_error_t kid_fail() noexcept {
+	if constexpr (is_attr_node<K>::value) {
+		return bind_attr<K>::fail;
+	} else if constexpr (is_text_piece<K>::value) {
+		return text_piece<K>::fail;
+	} else if constexpr (is_close_token<K>::value) {
+		return bind_error_t{};
+	} else {
+		return bind<K>::fail; // a child element, recursively
+	}
+}
+
+template <typename Open, typename... Kids> constexpr bind_error_t element_fail() noexcept {
+	// entity/reference failures and child elements, in document order
+	const bind_error_t kid_fails[] = {kid_fail<Kids>()..., bind_error_t{}};
+	for (const bind_error_t & f : kid_fails) {
+		if (f.reason != bind_reason::none) { return f; }
+	}
+	// attribute names must be unique within this element
+	constexpr size_t n = sizeof...(Kids);
+	const std::string_view attr_names[] = {attr_info<Kids>::name..., std::string_view{}};
+	for (size_t i = 0; i < n; ++i) {
+		if (attr_names[i].empty()) { continue; }
+		for (size_t j = i + 1; j < n; ++j) {
+			if (attr_names[i] == attr_names[j]) {
+				return bind_error_t{bind_reason::duplicate_attribute, attr_names[j]};
+			}
+		}
+	}
+	// the close tag (last kid, when not self-closing) must match
+	const std::string_view closes[] = {close_info<Kids>::raw..., std::string_view{}};
+	std::string_view close_raw{};
+	for (const std::string_view & c : closes) {
+		if (!c.empty()) { close_raw = c; }
+	}
+	if (!close_raw.empty()) {
+		std::string_view cname = close_raw.substr(2, close_raw.size() - 3); // strip "</" and ">"
+		while (!cname.empty() && is_xml_blank(cname[cname.size() - 1])) {
+			cname = cname.substr(0, cname.size() - 1);
+		}
+		if (cname != Open::value_type::view().substr(1)) { // open is "<name"
+			return bind_error_t{bind_reason::mismatched_tag, close_raw};
+		}
+	}
+	return bind_error_t{};
+}
+
 template <typename Open, typename... Kids>
 struct bind<ctlark::tree<bt_element, Open, Kids...>> {
 	using phase = decltype(take_attrs(ctll::list<>{}, bc<true>{}, Kids{}...));
 	using built = element_from<Open, phase>;
 	using type = typename built::type;
 	static constexpr bool ok = built::ok;
+	static constexpr bind_error_t fail = element_fail<Open, Kids...>();
 };
 
 } // namespace ctxml::detail

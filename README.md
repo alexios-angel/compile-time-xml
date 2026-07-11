@@ -123,6 +123,40 @@ records are `node_view` and `attribute_view`
 emits childless elements self-closed, and the result is
 null-terminated.
 
+## Debugging
+
+When `is_valid` says `false`, the reason is one query away, computed at
+compile time. Syntax failures carry the location and the expected
+tokens:
+
+```c++
+constexpr auto info = ctxml::error_info<"<a><b></b>">();
+// info.kind (lex/parse/...), info.position, info.line, info.column
+
+constexpr auto why = ctxml::error_message<"<a><b></b>">();
+//   ctlark: syntax error at line 1, column 11: unexpected end of input
+//     <a><b></b>
+//               ^
+//   expected: _COMMENT, _PI, OPEN, TEXT, CDATA, CLOSE
+```
+
+Documents that PARSE can still be ill-formed; the binder names the
+well-formedness rule and the offending token:
+
+```c++
+ctxml::bind_error<"<a><b></c></a>">();     // mismatched_tag, where == "</c>"
+ctxml::bind_error<R"(<a x="1" x="2"/>)">(); // duplicate_attribute, where == "x"
+ctxml::bind_error<"<a>&#x0;</a>">();       // bad_reference, where == "&#x0;"
+```
+
+A failed `parse<>()` names the failing stage and the query to run in
+its `static_assert` message. `ctxml::debug` bundles the [ctlark
+debugging toolbox](../compile-time-lark#debugging) with the XML grammar
+baked in: `traced_parse<input>()` (a recorded event log, also runnable
+at runtime under a debugger), `parse_runtime(text)` (runtime inputs
+against the compile-time tables), `dump_tokens<input>()` and
+`dump_grammar()`.
+
 ## C++17
 
 With a pre-C++20 compiler, inputs and keys are `constexpr

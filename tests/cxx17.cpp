@@ -30,3 +30,18 @@ static_assert([] {
 	return n;
 }() == 4 + 1);
 static_assert(ctxml::attributes(doc).size() == 1);
+
+// diagnostics through the variable-form API
+static_assert(ctxml::error_info<doc_text>().ok());
+static_assert(ctxml::error_info<bad_text>().ok()); // "<a></b>" PARSES; the binder rejects it
+constexpr auto mismatch = ctxml::bind_error<bad_text>();
+static_assert(mismatch.reason == ctxml::bind_reason::mismatched_tag);
+static_assert(mismatch.where == std::string_view{"</b>"});
+static constexpr auto unclosed_text = ctll::fixed_string{"<a><b></b>"};
+constexpr auto unclosed_info = ctxml::error_info<unclosed_text>();
+static_assert(unclosed_info.kind == ctlark::error_kind::parse);
+static_assert(unclosed_info.column == 11);
+static_assert(!ctxml::error_message<unclosed_text>().empty());
+constexpr auto traced = ctxml::debug::traced_parse<unclosed_text>();
+static_assert(!traced.ok && traced.log.events > 0);
+static_assert(!ctxml::debug::dump_tokens<doc_text>().empty());

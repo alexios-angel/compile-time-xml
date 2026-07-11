@@ -53,6 +53,10 @@ struct rnode {
 	int child_count;
 };
 
+// how many expected terminals a failure records (the true count is
+// kept separately so a diagnostic can say "... and N more")
+inline constexpr int expected_cap = 12;
+
 template <size_t M> struct parse_result {
 	static constexpr int node_cap = static_cast<int>(8 * (M + 2) + 128);
 	static constexpr int child_cap = static_cast<int>(8 * (M + 2) + 128);
@@ -60,6 +64,9 @@ template <size_t M> struct parse_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
 
 	rnode nodes[static_cast<size_t>(node_cap)]{};
 	int node_count = 0;
@@ -120,6 +127,18 @@ template <typename GT, size_t M> struct pipeline_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	// keep the terminals some Earley item expected at the failure point
+	constexpr void record_expected(const bool * exp, int sym_count) noexcept {
+		for (int t = 0; t < sym_count; ++t) {
+			if (!exp[t]) { continue; }
+			if (expected_count < expected_cap) { expected[expected_count++] = t; }
+			++expected_total;
+		}
+	}
 };
 
 // close set i: run predictions and completions to a fixpoint
@@ -166,11 +185,18 @@ constexpr bool accepted(const GT & g, int start_sym, const chart<GT, ItemCap, Se
 	return false;
 }
 
+// a tracer that traces nothing: every trace call is guarded by
+// `if constexpr (Tracer::enabled)`, so the disabled form costs zero
+// constexpr steps (debug.hpp provides the recording trace_log)
+struct null_tracer {
+	static constexpr bool enabled = false;
+};
+
 // the interleaved pipeline: close a set, lex among expected terminals,
 // scan, repeat
-template <typename GT, size_t M, int ItemCap, int SetCap>
+template <typename GT, size_t M, int ItemCap, int SetCap, typename Tracer = null_tracer>
 constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::string_view in,
-                                              chart<GT, ItemCap, SetCap> & ch) noexcept {
+                                              chart<GT, ItemCap, SetCap> & ch, Tracer * tr = nullptr) noexcept {
 	pipeline_result<GT, M> r{};
 	bool expected[static_cast<size_t>(GT::lim::syms)]{};
 	bool cur[static_cast<size_t>(GT::lim::states)]{};
@@ -188,7 +214,11 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 		close_set(g, ch, i);
 		ch.set_off[i + 1] = ch.item_count;
 		ch.set_count = i + 2;
+		if constexpr (Tracer::enabled) {
+			tr->event("earley: set closed (set, items)", {}, i, ch.set_off[i + 1] - ch.set_off[i]);
+		}
 		if (ch.overflow) {
+			if constexpr (Tracer::enabled) { tr->event("earley: chart overflow", {}, i); }
 			r.err = perr::overflow;
 			return r;
 		}
@@ -287,8 +317,10 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				}
 			}
 			if (best < 0) {
+				if constexpr (Tracer::enabled) { tr->event("lex: no terminal matches (offset)", {}, static_cast<long>(pos)); }
 				r.err = perr::lex;
 				r.err_pos = static_cast<int>(pos);
+				r.record_expected(expected, g.sym_count);
 				return r;
 			}
 			if (expected[best]) {
@@ -296,18 +328,24 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				break;
 			}
 			// ignored: skip and lex again in the same set
+			if constexpr (Tracer::enabled) {
+				tr->event("lex: skip ignored (offset, length)", g.name_of(best), static_cast<long>(pos), accept_len[best]);
+			}
 			pos += static_cast<size_t>(accept_len[best]);
 		}
 
 		if (winner < 0) {
 			// input exhausted (possibly after trailing ignored tokens)
 			if (pos >= in.size() && accepted(g, start_sym, ch, i)) {
+				if constexpr (Tracer::enabled) { tr->event("earley: accepted (tokens)", {}, i); }
 				r.ok = true;
 				r.count = i;
 				return r;
 			}
+			if constexpr (Tracer::enabled) { tr->event("earley: rejected at end of tokens (offset)", {}, static_cast<long>(pos)); }
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 
@@ -316,6 +354,9 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			r.err = perr::overflow;
 			r.err_pos = static_cast<int>(pos);
 			return r;
+		}
+		if constexpr (Tracer::enabled) {
+			tr->event("lex: token (offset, length)", g.name_of(winner), static_cast<long>(pos), accept_len[winner]);
 		}
 		r.toks[r.count++] = lex_token{winner, static_cast<int>(pos), accept_len[winner]};
 		const int set_start = ch.set_off[i];
@@ -331,6 +372,7 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			// nothing advanced: cannot happen (the winner was expected)
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 		pos += static_cast<size_t>(accept_len[winner]);
@@ -344,23 +386,37 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 
 // --- derivation extraction
 
-template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder {
+template <typename GT, typename RT, int ItemCap, int SetCap, typename Tracer = null_tracer> struct tree_builder {
 	const GT & g;
 	const chart<GT, ItemCap, SetCap> & ch;
 	const lex_token * toks;
 	int ntoks;
 	std::string_view input;
 	RT & out;
+	Tracer * tr = nullptr;
 	bool failed = false;
 	perr fail_kind = perr::none;
+	int fail_pos = -1; // byte offset of the failure, -1 when unknown
 
 	static constexpr int max_kids = 256;
 	static constexpr int max_depth = 256;
+
+	// the input offset where token index idx starts (input end past it)
+	constexpr int tok_off(int idx) const noexcept {
+		return idx < ntoks ? toks[idx].off : static_cast<int>(input.size());
+	}
 
 	constexpr void fail(perr k) noexcept {
 		if (!failed) {
 			failed = true;
 			fail_kind = k;
+		}
+	}
+	constexpr void fail(perr k, int pos) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+			fail_pos = pos;
 		}
 	}
 
@@ -385,7 +441,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	// where rhs symbol i starts; splits[rhs_len] == e
 	constexpr bool find_splits(int p, int s, int e, int * splits, int i, int pos, int depth) noexcept {
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(pos));
 			return false;
 		}
 		const cprod & pr = g.prods[p];
@@ -431,7 +487,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	constexpr void derive(int sym, int s, int e, bool keep_all, int * kids, int & nkids, int depth) noexcept {
 		if (failed) { return; }
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(s));
 			return;
 		}
 		// first completed production, in definition order
@@ -444,9 +500,12 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 			if (failed) { return; }
 		}
 		if (chosen < 0) {
-			fail(perr::parse);
+			if constexpr (Tracer::enabled) { tr->event("derive: no completed production (tokens)", g.name_of(sym), s, e); }
+			fail(perr::parse, tok_off(s));
 			return;
 		}
+		if constexpr (Tracer::enabled) { tr->event("derive: production chosen (rule, tokens)", g.name_of(sym), chosen, e - s); }
+		CTLARK_CONSTEXPR_ASSERT(splits[g.prods[chosen].rhs_len] == e, "ctlark internal: derivation splits do not cover the span");
 		const cprod & pr = g.prods[chosen];
 		const csym & sm = g.syms[sym];
 		const bool splice = sm.splice || sm.inlined;
@@ -508,8 +567,8 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 
 // --- the whole pipeline
 
-template <const auto & G, const auto & In, int StartSym>
-constexpr auto run_parse() noexcept {
+template <const auto & G, const auto & In, int StartSym, typename Tracer = null_tracer>
+constexpr auto run_parse_traced(Tracer * tr = nullptr) noexcept {
 	constexpr size_t M = In.size();
 	using GT = std::remove_cv_t<std::remove_reference_t<decltype(G)>>;
 	parse_result<M> r{};
@@ -527,20 +586,24 @@ constexpr auto run_parse() noexcept {
 	constexpr int item_cap = (dotted_positions(G) + 16) * (static_cast<int>(M) + 2) * 2;
 	constexpr int set_cap = static_cast<int>(M) + 3;
 	chart<GT, item_cap, set_cap> ch{};
-	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch);
+	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch, tr);
 	if (!pipe.ok) {
 		r.err = pipe.err;
 		r.err_pos = pipe.err_pos;
+		r.expected_count = pipe.expected_count;
+		r.expected_total = pipe.expected_total;
+		for (int k = 0; k < pipe.expected_count; ++k) { r.expected[k] = pipe.expected[k]; }
 		return r;
 	}
 
-	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap>;
-	TB tb{G, ch, pipe.toks, pipe.count, in, r};
+	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap, Tracer>;
+	TB tb{G, ch, pipe.toks, pipe.count, in, r, tr};
 	int kids[TB::max_kids]{};
 	int nkids = 0;
 	tb.derive(StartSym, 0, pipe.count, false, kids, nkids, 0);
 	if (tb.failed) {
 		r.err = tb.fail_kind;
+		if (tb.fail_pos >= 0) { r.err_pos = tb.fail_pos; }
 		return r;
 	}
 	if (nkids == 1) {
@@ -560,6 +623,11 @@ constexpr auto run_parse() noexcept {
 	}
 	r.ok = true;
 	return r;
+}
+
+template <const auto & G, const auto & In, int StartSym>
+constexpr auto run_parse() noexcept {
+	return run_parse_traced<G, In, StartSym>();
 }
 
 } // namespace ctlark::detail

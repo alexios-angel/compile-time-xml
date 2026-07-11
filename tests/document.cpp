@@ -29,7 +29,8 @@ static_assert(!ctxml::is_valid<"<a><!-- x -- y --></a>">); // -- inside comment
 static_assert(!ctxml::is_valid<"<a b='<'/>">);           // raw < in attribute
 
 // --- a real document
-constexpr auto doc = ctxml::parse<R"(<?xml version="1.0" encoding="UTF-8"?>
+constexpr auto doc = ctxml::parse<R"(
+<?xml version="1.0" encoding="UTF-8"?>
 <!-- server configuration -->
 <server host="example.com" port='8080' secure="true">
 	<path>/api</path>
@@ -40,7 +41,8 @@ constexpr auto doc = ctxml::parse<R"(<?xml version="1.0" encoding="UTF-8"?>
 	<raw><![CDATA[literal <markup> & stuff]]></raw>
 	<mixed>one<sep/>two</mixed>
 </server>
-<!-- trailing comment -->)">();
+<!-- trailing comment -->
+)">();
 
 static_assert(doc.name() == "server");
 static_assert(doc.attribute_count() == 3);
@@ -215,5 +217,47 @@ static_assert(ctxml::attributes(cfg).size() == 1);
 static_assert(ctxml::begin(ctxml::parse<"<a/>">()) == ctxml::end(ctxml::parse<"<a/>">()));
 
 } // namespace bracket_tests
+
+// --- diagnostics: error_info, error_message, bind_error, debug tools
+
+// valid documents report nothing
+static_assert(ctxml::error_info<"<a><b/></a>">().ok());
+static_assert(ctxml::error_message<"<a><b/></a>">() == ""sv);
+static_assert(ctxml::bind_error<"<a><b/></a>">().ok());
+
+// an unclosed element: kind, offset, line, column, expected tokens
+constexpr auto unclosed = ctxml::error_info<"<a><b></b>">();
+static_assert(unclosed.kind == ctlark::error_kind::parse);
+static_assert(unclosed.position == 10 && unclosed.line == 1 && unclosed.column == 11);
+static_assert(ctxml::error_message<"<a><b></b>">() ==
+              "ctlark: syntax error at line 1, column 11: unexpected end of input\n"
+              "  <a><b></b>\n"
+              "            ^\n"
+              "expected: _COMMENT, _PI, OPEN, TEXT, CDATA, CLOSE"sv);
+
+// well-formedness failures name the rule and the offending token
+constexpr auto mismatched = ctxml::bind_error<"<a><b></c></a>">();
+static_assert(mismatched.reason == ctxml::bind_reason::mismatched_tag);
+static_assert(mismatched.where == "</c>"sv);
+constexpr auto dup_attr = ctxml::bind_error<R"(<a x="1" x="2"/>)">();
+static_assert(dup_attr.reason == ctxml::bind_reason::duplicate_attribute);
+static_assert(dup_attr.where == "x"sv);
+constexpr auto bad_ref = ctxml::bind_error<"<a>&#x0;</a>">();
+static_assert(bad_ref.reason == ctxml::bind_reason::bad_reference);
+static_assert(bad_ref.where == "&#x0;"sv);
+
+// the ctlark debugging toolbox with the XML grammar baked in
+static_assert(ctxml::debug::dump_tokens<"<a x=\"1\">hi</a>">() ==
+              "OPEN '<a' @0..2\n"
+              "NAME 'x' @3..4\n"
+              "EQUAL '=' @4..5\n"
+              "DQVAL '\"1\"' @5..8\n"
+              "MORETHAN '>' @8..9\n"
+              "TEXT 'hi' @9..11\n"
+              "CLOSE '</a>' @11..15\n"sv);
+constexpr auto traced = ctxml::debug::traced_parse<"<a></b>">();
+static_assert(traced.ok); // the SYNTAX parses; the binder rejects it
+static_assert(traced.log.events > 0);
+static_assert(ctxml::debug::dump_grammar().find("terminal OPEN") != std::string_view::npos);
 
 #endif

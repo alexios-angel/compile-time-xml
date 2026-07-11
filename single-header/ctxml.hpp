@@ -4904,6 +4904,45 @@ template <typename... Items> struct grammar {
 
 #endif
 
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
+
+#endif
+
 #ifndef CTLARK__COMMON__HPP
 #define CTLARK__COMMON__HPP
 
@@ -5521,7 +5560,7 @@ template <size_t N> struct grammar_tables {
 	using lim = climits<N>;
 
 	bool ok = true;
-	char error[96]{};
+	char error[128]{};
 
 	cnode nodes[static_cast<size_t>(lim::nodes)]{};
 	int node_count = 0;
@@ -5559,6 +5598,20 @@ template <size_t N> struct grammar_tables {
 		ok = false;
 		size_t i = 0;
 		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
 		error[i] = '\0';
 	}
 	constexpr std::string_view error_view() const noexcept {
@@ -5640,7 +5693,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
 		const int s = intern(name, false);
-		if (syms[s].defined) { fail("ctlark: duplicate rule definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
 		syms[s].defined = true;
 		syms[s].bang = bang;
 		syms[s].cond = cond;
@@ -5649,7 +5702,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_term(std::string_view name, int prio) noexcept {
 		const int s = intern(name, true);
-		if (syms[s].defined) { fail("ctlark: duplicate terminal definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
 		syms[s].defined = true;
 		syms[s].prio = prio;
 		return s;
@@ -5696,12 +5749,12 @@ template <size_t N> struct grammar_tables {
 		}
 		const int root = emit_common(segs[1], *this);
 		if (root < 0) {
-			fail("ctlark: %import: not a supported common.* terminal");
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
 			return;
 		}
 		const int s = intern(alias, true);
 		if (syms[s].defined) {
-			fail("ctlark: duplicate terminal definition (%import)");
+			fail("ctlark: duplicate terminal definition (%import)", alias);
 			return;
 		}
 		syms[s].defined = true;
@@ -6194,7 +6247,7 @@ template <size_t N> struct grammar_tables {
 			case pk::tref: {
 				const int t = n.a;
 				if (syms[t].pattern < 0) {
-					fail("ctlark: reference to an undefined terminal");
+					fail("ctlark: reference to an undefined terminal", name_of(t));
 					return nfa_frag{0, 0};
 				}
 				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
@@ -6219,9 +6272,9 @@ template <size_t N> struct grammar_tables {
 	constexpr void validate() noexcept {
 		for (int i = 0; i < sym_count && ok; ++i) {
 			if (syms[i].terminal) {
-				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal"); }
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
 			} else {
-				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule"); }
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
 			}
 		}
 	}
@@ -6620,6 +6673,45 @@ template <typename... Items> struct grammar {
 
 #endif
 
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
+
+#endif
+
 #ifndef CTLARK__COMMON__HPP
 #define CTLARK__COMMON__HPP
 
@@ -7237,7 +7329,7 @@ template <size_t N> struct grammar_tables {
 	using lim = climits<N>;
 
 	bool ok = true;
-	char error[96]{};
+	char error[128]{};
 
 	cnode nodes[static_cast<size_t>(lim::nodes)]{};
 	int node_count = 0;
@@ -7275,6 +7367,20 @@ template <size_t N> struct grammar_tables {
 		ok = false;
 		size_t i = 0;
 		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
 		error[i] = '\0';
 	}
 	constexpr std::string_view error_view() const noexcept {
@@ -7356,7 +7462,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
 		const int s = intern(name, false);
-		if (syms[s].defined) { fail("ctlark: duplicate rule definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
 		syms[s].defined = true;
 		syms[s].bang = bang;
 		syms[s].cond = cond;
@@ -7365,7 +7471,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_term(std::string_view name, int prio) noexcept {
 		const int s = intern(name, true);
-		if (syms[s].defined) { fail("ctlark: duplicate terminal definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
 		syms[s].defined = true;
 		syms[s].prio = prio;
 		return s;
@@ -7412,12 +7518,12 @@ template <size_t N> struct grammar_tables {
 		}
 		const int root = emit_common(segs[1], *this);
 		if (root < 0) {
-			fail("ctlark: %import: not a supported common.* terminal");
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
 			return;
 		}
 		const int s = intern(alias, true);
 		if (syms[s].defined) {
-			fail("ctlark: duplicate terminal definition (%import)");
+			fail("ctlark: duplicate terminal definition (%import)", alias);
 			return;
 		}
 		syms[s].defined = true;
@@ -7910,7 +8016,7 @@ template <size_t N> struct grammar_tables {
 			case pk::tref: {
 				const int t = n.a;
 				if (syms[t].pattern < 0) {
-					fail("ctlark: reference to an undefined terminal");
+					fail("ctlark: reference to an undefined terminal", name_of(t));
 					return nfa_frag{0, 0};
 				}
 				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
@@ -7935,9 +8041,9 @@ template <size_t N> struct grammar_tables {
 	constexpr void validate() noexcept {
 		for (int i = 0; i < sym_count && ok; ++i) {
 			if (syms[i].terminal) {
-				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal"); }
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
 			} else {
-				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule"); }
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
 			}
 		}
 	}
@@ -8059,6 +8165,10 @@ struct rnode {
 	int child_count;
 };
 
+// how many expected terminals a failure records (the true count is
+// kept separately so a diagnostic can say "... and N more")
+inline constexpr int expected_cap = 12;
+
 template <size_t M> struct parse_result {
 	static constexpr int node_cap = static_cast<int>(8 * (M + 2) + 128);
 	static constexpr int child_cap = static_cast<int>(8 * (M + 2) + 128);
@@ -8066,6 +8176,9 @@ template <size_t M> struct parse_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
 
 	rnode nodes[static_cast<size_t>(node_cap)]{};
 	int node_count = 0;
@@ -8126,6 +8239,18 @@ template <typename GT, size_t M> struct pipeline_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	// keep the terminals some Earley item expected at the failure point
+	constexpr void record_expected(const bool * exp, int sym_count) noexcept {
+		for (int t = 0; t < sym_count; ++t) {
+			if (!exp[t]) { continue; }
+			if (expected_count < expected_cap) { expected[expected_count++] = t; }
+			++expected_total;
+		}
+	}
 };
 
 // close set i: run predictions and completions to a fixpoint
@@ -8172,11 +8297,18 @@ constexpr bool accepted(const GT & g, int start_sym, const chart<GT, ItemCap, Se
 	return false;
 }
 
+// a tracer that traces nothing: every trace call is guarded by
+// `if constexpr (Tracer::enabled)`, so the disabled form costs zero
+// constexpr steps (debug.hpp provides the recording trace_log)
+struct null_tracer {
+	static constexpr bool enabled = false;
+};
+
 // the interleaved pipeline: close a set, lex among expected terminals,
 // scan, repeat
-template <typename GT, size_t M, int ItemCap, int SetCap>
+template <typename GT, size_t M, int ItemCap, int SetCap, typename Tracer = null_tracer>
 constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::string_view in,
-                                              chart<GT, ItemCap, SetCap> & ch) noexcept {
+                                              chart<GT, ItemCap, SetCap> & ch, Tracer * tr = nullptr) noexcept {
 	pipeline_result<GT, M> r{};
 	bool expected[static_cast<size_t>(GT::lim::syms)]{};
 	bool cur[static_cast<size_t>(GT::lim::states)]{};
@@ -8194,7 +8326,11 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 		close_set(g, ch, i);
 		ch.set_off[i + 1] = ch.item_count;
 		ch.set_count = i + 2;
+		if constexpr (Tracer::enabled) {
+			tr->event("earley: set closed (set, items)", {}, i, ch.set_off[i + 1] - ch.set_off[i]);
+		}
 		if (ch.overflow) {
+			if constexpr (Tracer::enabled) { tr->event("earley: chart overflow", {}, i); }
 			r.err = perr::overflow;
 			return r;
 		}
@@ -8293,8 +8429,10 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				}
 			}
 			if (best < 0) {
+				if constexpr (Tracer::enabled) { tr->event("lex: no terminal matches (offset)", {}, static_cast<long>(pos)); }
 				r.err = perr::lex;
 				r.err_pos = static_cast<int>(pos);
+				r.record_expected(expected, g.sym_count);
 				return r;
 			}
 			if (expected[best]) {
@@ -8302,18 +8440,24 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				break;
 			}
 			// ignored: skip and lex again in the same set
+			if constexpr (Tracer::enabled) {
+				tr->event("lex: skip ignored (offset, length)", g.name_of(best), static_cast<long>(pos), accept_len[best]);
+			}
 			pos += static_cast<size_t>(accept_len[best]);
 		}
 
 		if (winner < 0) {
 			// input exhausted (possibly after trailing ignored tokens)
 			if (pos >= in.size() && accepted(g, start_sym, ch, i)) {
+				if constexpr (Tracer::enabled) { tr->event("earley: accepted (tokens)", {}, i); }
 				r.ok = true;
 				r.count = i;
 				return r;
 			}
+			if constexpr (Tracer::enabled) { tr->event("earley: rejected at end of tokens (offset)", {}, static_cast<long>(pos)); }
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 
@@ -8322,6 +8466,9 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			r.err = perr::overflow;
 			r.err_pos = static_cast<int>(pos);
 			return r;
+		}
+		if constexpr (Tracer::enabled) {
+			tr->event("lex: token (offset, length)", g.name_of(winner), static_cast<long>(pos), accept_len[winner]);
 		}
 		r.toks[r.count++] = lex_token{winner, static_cast<int>(pos), accept_len[winner]};
 		const int set_start = ch.set_off[i];
@@ -8337,6 +8484,7 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			// nothing advanced: cannot happen (the winner was expected)
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 		pos += static_cast<size_t>(accept_len[winner]);
@@ -8350,23 +8498,37 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 
 // --- derivation extraction
 
-template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder {
+template <typename GT, typename RT, int ItemCap, int SetCap, typename Tracer = null_tracer> struct tree_builder {
 	const GT & g;
 	const chart<GT, ItemCap, SetCap> & ch;
 	const lex_token * toks;
 	int ntoks;
 	std::string_view input;
 	RT & out;
+	Tracer * tr = nullptr;
 	bool failed = false;
 	perr fail_kind = perr::none;
+	int fail_pos = -1; // byte offset of the failure, -1 when unknown
 
 	static constexpr int max_kids = 256;
 	static constexpr int max_depth = 256;
+
+	// the input offset where token index idx starts (input end past it)
+	constexpr int tok_off(int idx) const noexcept {
+		return idx < ntoks ? toks[idx].off : static_cast<int>(input.size());
+	}
 
 	constexpr void fail(perr k) noexcept {
 		if (!failed) {
 			failed = true;
 			fail_kind = k;
+		}
+	}
+	constexpr void fail(perr k, int pos) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+			fail_pos = pos;
 		}
 	}
 
@@ -8391,7 +8553,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	// where rhs symbol i starts; splits[rhs_len] == e
 	constexpr bool find_splits(int p, int s, int e, int * splits, int i, int pos, int depth) noexcept {
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(pos));
 			return false;
 		}
 		const cprod & pr = g.prods[p];
@@ -8437,7 +8599,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	constexpr void derive(int sym, int s, int e, bool keep_all, int * kids, int & nkids, int depth) noexcept {
 		if (failed) { return; }
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(s));
 			return;
 		}
 		// first completed production, in definition order
@@ -8450,9 +8612,12 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 			if (failed) { return; }
 		}
 		if (chosen < 0) {
-			fail(perr::parse);
+			if constexpr (Tracer::enabled) { tr->event("derive: no completed production (tokens)", g.name_of(sym), s, e); }
+			fail(perr::parse, tok_off(s));
 			return;
 		}
+		if constexpr (Tracer::enabled) { tr->event("derive: production chosen (rule, tokens)", g.name_of(sym), chosen, e - s); }
+		CTLARK_CONSTEXPR_ASSERT(splits[g.prods[chosen].rhs_len] == e, "ctlark internal: derivation splits do not cover the span");
 		const cprod & pr = g.prods[chosen];
 		const csym & sm = g.syms[sym];
 		const bool splice = sm.splice || sm.inlined;
@@ -8514,8 +8679,8 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 
 // --- the whole pipeline
 
-template <const auto & G, const auto & In, int StartSym>
-constexpr auto run_parse() noexcept {
+template <const auto & G, const auto & In, int StartSym, typename Tracer = null_tracer>
+constexpr auto run_parse_traced(Tracer * tr = nullptr) noexcept {
 	constexpr size_t M = In.size();
 	using GT = std::remove_cv_t<std::remove_reference_t<decltype(G)>>;
 	parse_result<M> r{};
@@ -8533,20 +8698,24 @@ constexpr auto run_parse() noexcept {
 	constexpr int item_cap = (dotted_positions(G) + 16) * (static_cast<int>(M) + 2) * 2;
 	constexpr int set_cap = static_cast<int>(M) + 3;
 	chart<GT, item_cap, set_cap> ch{};
-	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch);
+	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch, tr);
 	if (!pipe.ok) {
 		r.err = pipe.err;
 		r.err_pos = pipe.err_pos;
+		r.expected_count = pipe.expected_count;
+		r.expected_total = pipe.expected_total;
+		for (int k = 0; k < pipe.expected_count; ++k) { r.expected[k] = pipe.expected[k]; }
 		return r;
 	}
 
-	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap>;
-	TB tb{G, ch, pipe.toks, pipe.count, in, r};
+	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap, Tracer>;
+	TB tb{G, ch, pipe.toks, pipe.count, in, r, tr};
 	int kids[TB::max_kids]{};
 	int nkids = 0;
 	tb.derive(StartSym, 0, pipe.count, false, kids, nkids, 0);
 	if (tb.failed) {
 		r.err = tb.fail_kind;
+		if (tb.fail_pos >= 0) { r.err_pos = tb.fail_pos; }
 		return r;
 	}
 	if (nkids == 1) {
@@ -8566,6 +8735,11 @@ constexpr auto run_parse() noexcept {
 	}
 	r.ok = true;
 	return r;
+}
+
+template <const auto & G, const auto & In, int StartSym>
+constexpr auto run_parse() noexcept {
+	return run_parse_traced<G, In, StartSym>();
 }
 
 } // namespace ctlark::detail
@@ -9041,8 +9215,8 @@ constexpr void for_each_child(tree<Data, Children...>, F && f) {
 
 #endif
 
-#ifndef CTLARK__LIFT__HPP
-#define CTLARK__LIFT__HPP
+#ifndef CTLARK__DIAG__HPP
+#define CTLARK__DIAG__HPP
 
 #ifndef CTLARK__EARLEY__HPP
 #define CTLARK__EARLEY__HPP
@@ -9369,6 +9543,45 @@ template <typename... Items> struct grammar {
 };
 
 } // namespace ctlark::ast
+
+#endif
+
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
 
 #endif
 
@@ -9989,7 +10202,7 @@ template <size_t N> struct grammar_tables {
 	using lim = climits<N>;
 
 	bool ok = true;
-	char error[96]{};
+	char error[128]{};
 
 	cnode nodes[static_cast<size_t>(lim::nodes)]{};
 	int node_count = 0;
@@ -10027,6 +10240,20 @@ template <size_t N> struct grammar_tables {
 		ok = false;
 		size_t i = 0;
 		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
 		error[i] = '\0';
 	}
 	constexpr std::string_view error_view() const noexcept {
@@ -10108,7 +10335,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
 		const int s = intern(name, false);
-		if (syms[s].defined) { fail("ctlark: duplicate rule definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
 		syms[s].defined = true;
 		syms[s].bang = bang;
 		syms[s].cond = cond;
@@ -10117,7 +10344,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_term(std::string_view name, int prio) noexcept {
 		const int s = intern(name, true);
-		if (syms[s].defined) { fail("ctlark: duplicate terminal definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
 		syms[s].defined = true;
 		syms[s].prio = prio;
 		return s;
@@ -10164,12 +10391,12 @@ template <size_t N> struct grammar_tables {
 		}
 		const int root = emit_common(segs[1], *this);
 		if (root < 0) {
-			fail("ctlark: %import: not a supported common.* terminal");
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
 			return;
 		}
 		const int s = intern(alias, true);
 		if (syms[s].defined) {
-			fail("ctlark: duplicate terminal definition (%import)");
+			fail("ctlark: duplicate terminal definition (%import)", alias);
 			return;
 		}
 		syms[s].defined = true;
@@ -10662,7 +10889,7 @@ template <size_t N> struct grammar_tables {
 			case pk::tref: {
 				const int t = n.a;
 				if (syms[t].pattern < 0) {
-					fail("ctlark: reference to an undefined terminal");
+					fail("ctlark: reference to an undefined terminal", name_of(t));
 					return nfa_frag{0, 0};
 				}
 				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
@@ -10687,9 +10914,9 @@ template <size_t N> struct grammar_tables {
 	constexpr void validate() noexcept {
 		for (int i = 0; i < sym_count && ok; ++i) {
 			if (syms[i].terminal) {
-				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal"); }
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
 			} else {
-				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule"); }
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
 			}
 		}
 	}
@@ -10811,6 +11038,10 @@ struct rnode {
 	int child_count;
 };
 
+// how many expected terminals a failure records (the true count is
+// kept separately so a diagnostic can say "... and N more")
+inline constexpr int expected_cap = 12;
+
 template <size_t M> struct parse_result {
 	static constexpr int node_cap = static_cast<int>(8 * (M + 2) + 128);
 	static constexpr int child_cap = static_cast<int>(8 * (M + 2) + 128);
@@ -10818,6 +11049,9 @@ template <size_t M> struct parse_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
 
 	rnode nodes[static_cast<size_t>(node_cap)]{};
 	int node_count = 0;
@@ -10878,6 +11112,18 @@ template <typename GT, size_t M> struct pipeline_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	// keep the terminals some Earley item expected at the failure point
+	constexpr void record_expected(const bool * exp, int sym_count) noexcept {
+		for (int t = 0; t < sym_count; ++t) {
+			if (!exp[t]) { continue; }
+			if (expected_count < expected_cap) { expected[expected_count++] = t; }
+			++expected_total;
+		}
+	}
 };
 
 // close set i: run predictions and completions to a fixpoint
@@ -10924,11 +11170,18 @@ constexpr bool accepted(const GT & g, int start_sym, const chart<GT, ItemCap, Se
 	return false;
 }
 
+// a tracer that traces nothing: every trace call is guarded by
+// `if constexpr (Tracer::enabled)`, so the disabled form costs zero
+// constexpr steps (debug.hpp provides the recording trace_log)
+struct null_tracer {
+	static constexpr bool enabled = false;
+};
+
 // the interleaved pipeline: close a set, lex among expected terminals,
 // scan, repeat
-template <typename GT, size_t M, int ItemCap, int SetCap>
+template <typename GT, size_t M, int ItemCap, int SetCap, typename Tracer = null_tracer>
 constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::string_view in,
-                                              chart<GT, ItemCap, SetCap> & ch) noexcept {
+                                              chart<GT, ItemCap, SetCap> & ch, Tracer * tr = nullptr) noexcept {
 	pipeline_result<GT, M> r{};
 	bool expected[static_cast<size_t>(GT::lim::syms)]{};
 	bool cur[static_cast<size_t>(GT::lim::states)]{};
@@ -10946,7 +11199,11 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 		close_set(g, ch, i);
 		ch.set_off[i + 1] = ch.item_count;
 		ch.set_count = i + 2;
+		if constexpr (Tracer::enabled) {
+			tr->event("earley: set closed (set, items)", {}, i, ch.set_off[i + 1] - ch.set_off[i]);
+		}
 		if (ch.overflow) {
+			if constexpr (Tracer::enabled) { tr->event("earley: chart overflow", {}, i); }
 			r.err = perr::overflow;
 			return r;
 		}
@@ -11045,8 +11302,10 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				}
 			}
 			if (best < 0) {
+				if constexpr (Tracer::enabled) { tr->event("lex: no terminal matches (offset)", {}, static_cast<long>(pos)); }
 				r.err = perr::lex;
 				r.err_pos = static_cast<int>(pos);
+				r.record_expected(expected, g.sym_count);
 				return r;
 			}
 			if (expected[best]) {
@@ -11054,18 +11313,24 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				break;
 			}
 			// ignored: skip and lex again in the same set
+			if constexpr (Tracer::enabled) {
+				tr->event("lex: skip ignored (offset, length)", g.name_of(best), static_cast<long>(pos), accept_len[best]);
+			}
 			pos += static_cast<size_t>(accept_len[best]);
 		}
 
 		if (winner < 0) {
 			// input exhausted (possibly after trailing ignored tokens)
 			if (pos >= in.size() && accepted(g, start_sym, ch, i)) {
+				if constexpr (Tracer::enabled) { tr->event("earley: accepted (tokens)", {}, i); }
 				r.ok = true;
 				r.count = i;
 				return r;
 			}
+			if constexpr (Tracer::enabled) { tr->event("earley: rejected at end of tokens (offset)", {}, static_cast<long>(pos)); }
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 
@@ -11074,6 +11339,9 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			r.err = perr::overflow;
 			r.err_pos = static_cast<int>(pos);
 			return r;
+		}
+		if constexpr (Tracer::enabled) {
+			tr->event("lex: token (offset, length)", g.name_of(winner), static_cast<long>(pos), accept_len[winner]);
 		}
 		r.toks[r.count++] = lex_token{winner, static_cast<int>(pos), accept_len[winner]};
 		const int set_start = ch.set_off[i];
@@ -11089,6 +11357,7 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			// nothing advanced: cannot happen (the winner was expected)
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 		pos += static_cast<size_t>(accept_len[winner]);
@@ -11102,23 +11371,37 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 
 // --- derivation extraction
 
-template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder {
+template <typename GT, typename RT, int ItemCap, int SetCap, typename Tracer = null_tracer> struct tree_builder {
 	const GT & g;
 	const chart<GT, ItemCap, SetCap> & ch;
 	const lex_token * toks;
 	int ntoks;
 	std::string_view input;
 	RT & out;
+	Tracer * tr = nullptr;
 	bool failed = false;
 	perr fail_kind = perr::none;
+	int fail_pos = -1; // byte offset of the failure, -1 when unknown
 
 	static constexpr int max_kids = 256;
 	static constexpr int max_depth = 256;
+
+	// the input offset where token index idx starts (input end past it)
+	constexpr int tok_off(int idx) const noexcept {
+		return idx < ntoks ? toks[idx].off : static_cast<int>(input.size());
+	}
 
 	constexpr void fail(perr k) noexcept {
 		if (!failed) {
 			failed = true;
 			fail_kind = k;
+		}
+	}
+	constexpr void fail(perr k, int pos) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+			fail_pos = pos;
 		}
 	}
 
@@ -11143,7 +11426,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	// where rhs symbol i starts; splits[rhs_len] == e
 	constexpr bool find_splits(int p, int s, int e, int * splits, int i, int pos, int depth) noexcept {
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(pos));
 			return false;
 		}
 		const cprod & pr = g.prods[p];
@@ -11189,7 +11472,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	constexpr void derive(int sym, int s, int e, bool keep_all, int * kids, int & nkids, int depth) noexcept {
 		if (failed) { return; }
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(s));
 			return;
 		}
 		// first completed production, in definition order
@@ -11202,9 +11485,12 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 			if (failed) { return; }
 		}
 		if (chosen < 0) {
-			fail(perr::parse);
+			if constexpr (Tracer::enabled) { tr->event("derive: no completed production (tokens)", g.name_of(sym), s, e); }
+			fail(perr::parse, tok_off(s));
 			return;
 		}
+		if constexpr (Tracer::enabled) { tr->event("derive: production chosen (rule, tokens)", g.name_of(sym), chosen, e - s); }
+		CTLARK_CONSTEXPR_ASSERT(splits[g.prods[chosen].rhs_len] == e, "ctlark internal: derivation splits do not cover the span");
 		const cprod & pr = g.prods[chosen];
 		const csym & sm = g.syms[sym];
 		const bool splice = sm.splice || sm.inlined;
@@ -11266,8 +11552,8 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 
 // --- the whole pipeline
 
-template <const auto & G, const auto & In, int StartSym>
-constexpr auto run_parse() noexcept {
+template <const auto & G, const auto & In, int StartSym, typename Tracer = null_tracer>
+constexpr auto run_parse_traced(Tracer * tr = nullptr) noexcept {
 	constexpr size_t M = In.size();
 	using GT = std::remove_cv_t<std::remove_reference_t<decltype(G)>>;
 	parse_result<M> r{};
@@ -11285,20 +11571,24 @@ constexpr auto run_parse() noexcept {
 	constexpr int item_cap = (dotted_positions(G) + 16) * (static_cast<int>(M) + 2) * 2;
 	constexpr int set_cap = static_cast<int>(M) + 3;
 	chart<GT, item_cap, set_cap> ch{};
-	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch);
+	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch, tr);
 	if (!pipe.ok) {
 		r.err = pipe.err;
 		r.err_pos = pipe.err_pos;
+		r.expected_count = pipe.expected_count;
+		r.expected_total = pipe.expected_total;
+		for (int k = 0; k < pipe.expected_count; ++k) { r.expected[k] = pipe.expected[k]; }
 		return r;
 	}
 
-	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap>;
-	TB tb{G, ch, pipe.toks, pipe.count, in, r};
+	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap, Tracer>;
+	TB tb{G, ch, pipe.toks, pipe.count, in, r, tr};
 	int kids[TB::max_kids]{};
 	int nkids = 0;
 	tb.derive(StartSym, 0, pipe.count, false, kids, nkids, 0);
 	if (tb.failed) {
 		r.err = tb.fail_kind;
+		if (tb.fail_pos >= 0) { r.err_pos = tb.fail_pos; }
 		return r;
 	}
 	if (nkids == 1) {
@@ -11318,6 +11608,3312 @@ constexpr auto run_parse() noexcept {
 	}
 	r.ok = true;
 	return r;
+}
+
+template <const auto & G, const auto & In, int StartSym>
+constexpr auto run_parse() noexcept {
+	return run_parse_traced<G, In, StartSym>();
+}
+
+} // namespace ctlark::detail
+
+#endif
+
+#ifndef CTLARK__TREE__HPP
+#define CTLARK__TREE__HPP
+
+#ifndef CTLARK__TEXT__HPP
+#define CTLARK__TEXT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// A compile-time string as a type: one non-type template parameter per
+// character. Used for names and token values throughout - two texts
+// with the same characters are the same TYPE, which is what makes
+// name comparisons and tree lookups plain type equality.
+
+namespace ctlark {
+
+template <auto... Chars> struct text {
+	// null-terminated so c_str()/data() work as C strings; size() excludes it
+	static constexpr char storage[sizeof...(Chars) + 1]{static_cast<char>(Chars)..., '\0'};
+
+	static constexpr const char * c_str() noexcept {
+		return storage;
+	}
+	static constexpr size_t size() noexcept {
+		return sizeof...(Chars);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Chars) == 0;
+	}
+	static constexpr std::string_view view() noexcept {
+		return std::string_view{storage, sizeof...(Chars)};
+	}
+	constexpr operator std::string_view() const noexcept {
+		return view();
+	}
+	template <auto... Rhs> constexpr bool operator==(text<Rhs...>) const noexcept {
+		return view() == text<Rhs...>::view();
+	}
+	friend constexpr bool operator==(text, std::string_view rhs) noexcept {
+		return view() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, text) noexcept {
+		return lhs == view();
+	}
+#if __cplusplus < 202002L
+	template <auto... Rhs> constexpr bool operator!=(text<Rhs...>) const noexcept {
+		return view() != text<Rhs...>::view();
+	}
+	friend constexpr bool operator!=(text, std::string_view rhs) noexcept {
+		return view() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, text) noexcept {
+		return lhs != view();
+	}
+#endif
+};
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLL__UTILITIES__HPP
+#define CTLL__UTILITIES__HPP
+
+#ifndef CTLL_IN_A_MODULE
+#include <type_traits>
+#endif
+
+#ifdef CTLL_IN_A_MODULE
+#define CTLL_EXPORT export
+#else
+#define CTLL_EXPORT 
+#endif
+
+#if defined __cpp_nontype_template_parameter_class
+    #define CTLL_CNTTP_COMPILER_CHECK 1
+#elif defined __cpp_nontype_template_args
+// compiler which defines correctly feature test macro (not you clang)
+    #if __cpp_nontype_template_args >= 201911L
+        #define CTLL_CNTTP_COMPILER_CHECK 1
+    #elif __cpp_nontype_template_args >= 201411L
+// appleclang 13+
+      #if defined __apple_build_version__
+        #if defined __clang_major__ && __clang_major__ >= 13
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #else 
+// clang 12+
+        #if defined __clang_major__ && __clang_major__ >= 12
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #endif
+    #endif
+#endif
+
+#ifndef CTLL_CNTTP_COMPILER_CHECK
+    #define CTLL_CNTTP_COMPILER_CHECK 0
+#endif
+
+#ifdef _MSC_VER
+#define CTLL_FORCE_INLINE __forceinline
+#else
+#define CTLL_FORCE_INLINE __attribute__((always_inline))
+#endif
+
+namespace ctll {
+	
+template <bool> struct conditional_helper;
+	
+template <> struct conditional_helper<true> {
+	template <typename A, typename> using type = A;
+};
+
+template <> struct conditional_helper<false> {
+	template <typename, typename B> using type = B;
+};
+
+template <bool V, typename A, typename B> using conditional = typename conditional_helper<V>::template type<A,B>;
+	
+}
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#include <type_traits>
+#endif
+
+// The parse tree a parse produces, shaped like lark's: Tree nodes with
+// a data name and children, Token leaves with a terminal type and a
+// value. The whole tree is a TYPE - every name, value and nesting
+// level is encoded in template parameters - so the objects are empty
+// and every accessor is constexpr and static.
+//
+// repr() renders lark's textual form:
+//
+//   Tree(start, [Token(WORD, 'Hello'), Token(WORD, 'World')])
+//
+// and pretty() the indented form. Both live in static storage.
+
+namespace ctlark {
+
+enum class kind {
+	tree,
+	token
+};
+
+template <typename Type, typename Value> struct token;
+template <typename Data, typename... Children> struct tree;
+
+namespace detail {
+
+template <size_t Index, typename Head, typename... Tail> constexpr auto nth() noexcept {
+	if constexpr (Index == 0) {
+		return Head{};
+	} else {
+		return nth<Index - 1, Tail...>();
+	}
+}
+
+// compare a compile-time key against a text type's content
+#if CTLL_CNTTP_COMPILER_CHECK
+template <ctll::fixed_string Key, typename Text> constexpr bool text_matches() noexcept {
+#else
+template <const auto & Key, typename Text> constexpr bool text_matches() noexcept {
+#endif
+	constexpr auto view = Text::view();
+	if (Key.size() != view.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < view.size(); ++i) {
+		if (static_cast<char32_t>(static_cast<unsigned char>(view[i])) != Key[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// --- repr rendering (a size pass, then a fill pass in static storage)
+
+constexpr size_t repr_escaped_size(std::string_view v) noexcept {
+	size_t n = 0;
+	for (const char c : v) { n += (c == '\'' || c == '\\') ? 2 : 1; }
+	return n;
+}
+
+struct repr_sink {
+	char * out;
+	size_t at = 0;
+	constexpr void put(std::string_view s) noexcept {
+		for (const char c : s) { out[at++] = c; }
+	}
+	constexpr void put_escaped(std::string_view s) noexcept {
+		for (const char c : s) {
+			if (c == '\'' || c == '\\') { out[at++] = '\\'; }
+			out[at++] = c;
+		}
+	}
+};
+
+template <typename Node> struct repr_size;
+template <typename Type, typename Value> struct repr_size<token<Type, Value>> {
+	// Token(TYPE, 'value')
+	static constexpr size_t value = 6 + Type::size() + 3 + repr_escaped_size(Value::view()) + 2;
+};
+template <typename Data, typename... Children> struct repr_size<tree<Data, Children...>> {
+	// Tree(data, [c1, c2])
+	static constexpr size_t value = 5 + Data::size() + 3
+		+ (repr_size<Children>::value + ... + 0)
+		+ (sizeof...(Children) > 1 ? (sizeof...(Children) - 1) * 2 : 0)
+		+ 2;
+};
+
+template <typename Node> constexpr void repr_render(repr_sink & s) noexcept;
+
+template <typename Type, typename Value, typename Sink = repr_sink>
+constexpr void repr_render_token(repr_sink & s) noexcept {
+	s.put("Token(");
+	s.put(Type::view());
+	s.put(", '");
+	s.put_escaped(Value::view());
+	s.put("')");
+}
+
+template <typename Data, typename... Children>
+constexpr void repr_render_tree(repr_sink & s) noexcept {
+	s.put("Tree(");
+	s.put(Data::view());
+	s.put(", [");
+	bool first = true;
+	((first ? (void)(first = false) : s.put(", "), repr_render<Children>(s)), ...);
+	s.put("])");
+}
+
+template <typename Node> struct repr_dispatch;
+template <typename Type, typename Value> struct repr_dispatch<token<Type, Value>> {
+	static constexpr void render(repr_sink & s) noexcept {
+		repr_render_token<Type, Value>(s);
+	}
+};
+template <typename Data, typename... Children> struct repr_dispatch<tree<Data, Children...>> {
+	static constexpr void render(repr_sink & s) noexcept {
+		repr_render_tree<Data, Children...>(s);
+	}
+};
+template <typename Node> constexpr void repr_render(repr_sink & s) noexcept {
+	repr_dispatch<Node>::render(s);
+}
+
+template <typename Node> struct repr_storage {
+	static constexpr size_t length = repr_size<Node>::value;
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		repr_render<Node>(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+// --- pretty rendering: data per line, children indented two spaces
+
+template <typename Node> struct pretty_size;
+template <typename Type, typename Value> struct pretty_size<token<Type, Value>> {
+	static constexpr size_t at(size_t indent) noexcept {
+		return indent + Value::size() + 1;
+	}
+};
+template <typename Data, typename... Children> struct pretty_size<tree<Data, Children...>> {
+	static constexpr size_t at(size_t indent) noexcept {
+		return indent + Data::size() + 1 + (pretty_size<Children>::at(indent + 2) + ... + 0);
+	}
+};
+
+template <typename Node> struct pretty_dispatch;
+template <typename Node> constexpr void pretty_render(repr_sink & s, size_t indent) noexcept {
+	pretty_dispatch<Node>::render(s, indent);
+}
+template <typename Type, typename Value> struct pretty_dispatch<token<Type, Value>> {
+	static constexpr void render(repr_sink & s, size_t indent) noexcept {
+		for (size_t i = 0; i < indent; ++i) { s.put(" "); }
+		s.put(Value::view());
+		s.put("\n");
+	}
+};
+template <typename Data, typename... Children> struct pretty_dispatch<tree<Data, Children...>> {
+	static constexpr void render(repr_sink & s, size_t indent) noexcept {
+		for (size_t i = 0; i < indent; ++i) { s.put(" "); }
+		s.put(Data::view());
+		s.put("\n");
+		(pretty_render<Children>(s, indent + 2), ...);
+	}
+};
+
+template <typename Node> struct pretty_storage {
+	static constexpr size_t length = pretty_size<Node>::at(0);
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		pretty_render<Node>(s, 0);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+// --- Token: a terminal match; type() is the terminal name
+
+template <typename Type, typename Value> struct token {
+	static constexpr ctlark::kind node_kind = kind::token;
+	using type_type = Type;
+	using value_type = Value;
+
+	static constexpr bool is_token() noexcept {
+		return true;
+	}
+	static constexpr bool is_tree() noexcept {
+		return false;
+	}
+	static constexpr std::string_view type() noexcept {
+		return Type::view();
+	}
+	static constexpr std::string_view value() noexcept {
+		return Value::view();
+	}
+	static constexpr size_t size() noexcept {
+		return Value::size();
+	}
+	// Token(WORD, 'Hello')
+	static constexpr std::string_view repr() noexcept {
+		return detail::repr_storage<token>::view;
+	}
+
+	constexpr operator std::string_view() const noexcept {
+		return value();
+	}
+	friend constexpr bool operator==(token, std::string_view rhs) noexcept {
+		return value() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, token) noexcept {
+		return lhs == value();
+	}
+#if __cplusplus < 202002L
+	friend constexpr bool operator!=(token, std::string_view rhs) noexcept {
+		return value() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, token) noexcept {
+		return lhs != value();
+	}
+#endif
+};
+
+// --- Tree: a rule match; data() names the rule (or its -> alias)
+
+template <typename Data, typename... Children> struct tree {
+	static constexpr ctlark::kind node_kind = kind::tree;
+	using data_type = Data;
+
+	static constexpr bool is_token() noexcept {
+		return false;
+	}
+	static constexpr bool is_tree() noexcept {
+		return true;
+	}
+	static constexpr std::string_view data() noexcept {
+		return Data::view();
+	}
+
+	static constexpr size_t child_count() noexcept {
+		return sizeof...(Children);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Children) == 0;
+	}
+	template <size_t Index> static constexpr auto child() noexcept {
+		static_assert(Index < sizeof...(Children), "ctlark: child index out of range");
+		return detail::nth<Index, Children...>();
+	}
+
+	// --- child trees by data name (get: first match, a compile error
+	// when absent)
+
+#if CTLL_CNTTP_COMPILER_CHECK
+	template <ctll::fixed_string Name> static constexpr bool contains() noexcept {
+		return (child_matches<Name, Children>() || ...);
+	}
+	template <ctll::fixed_string Name> static constexpr size_t count() noexcept {
+		return (static_cast<size_t>(child_matches<Name, Children>()) + ... + 0);
+	}
+	template <ctll::fixed_string Name> static constexpr auto get() noexcept {
+		static_assert((child_matches<Name, Children>() || ...), "ctlark: no child tree with this data");
+		return find_child<Name, Children...>();
+	}
+#else
+	template <const auto & Name> static constexpr bool contains() noexcept {
+		return (child_matches<Name, Children>() || ...);
+	}
+	template <const auto & Name> static constexpr size_t count() noexcept {
+		return (static_cast<size_t>(child_matches<Name, Children>()) + ... + 0);
+	}
+	template <const auto & Name> static constexpr auto get() noexcept {
+		static_assert((child_matches<Name, Children>() || ...), "ctlark: no child tree with this data");
+		return find_child<Name, Children...>();
+	}
+#endif
+
+	// Tree(start, [Token(WORD, 'Hello'), Token(WORD, 'World')])
+	static constexpr std::string_view repr() noexcept {
+		return detail::repr_storage<tree>::view;
+	}
+	// the indented multi-line form, like lark's Tree.pretty()
+	static constexpr std::string_view pretty() noexcept {
+		return detail::pretty_storage<tree>::view;
+	}
+
+private:
+#if CTLL_CNTTP_COMPILER_CHECK
+	template <ctll::fixed_string Name, typename Child> static constexpr bool child_matches() noexcept {
+#else
+	template <const auto & Name, typename Child> static constexpr bool child_matches() noexcept {
+#endif
+		if constexpr (Child::node_kind == kind::tree) {
+			return detail::text_matches<Name, typename Child::data_type>();
+		} else {
+			return false;
+		}
+	}
+
+#if CTLL_CNTTP_COMPILER_CHECK
+	template <ctll::fixed_string Name, typename Head, typename... Tail> static constexpr auto find_child() noexcept {
+#else
+	template <const auto & Name, typename Head, typename... Tail> static constexpr auto find_child() noexcept {
+#endif
+		if constexpr (child_matches<Name, Head>()) {
+			return Head{};
+		} else {
+			return find_child<Name, Tail...>();
+		}
+	}
+};
+
+// compile-time iteration over a tree's children, each with its own type
+CTLL_EXPORT template <typename F, typename Data, typename... Children>
+constexpr void for_each_child(tree<Data, Children...>, F && f) {
+	(f(Children{}), ...);
+}
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLL__UTILITIES__HPP
+#define CTLL__UTILITIES__HPP
+
+#ifndef CTLL_IN_A_MODULE
+#include <type_traits>
+#endif
+
+#ifdef CTLL_IN_A_MODULE
+#define CTLL_EXPORT export
+#else
+#define CTLL_EXPORT 
+#endif
+
+#if defined __cpp_nontype_template_parameter_class
+    #define CTLL_CNTTP_COMPILER_CHECK 1
+#elif defined __cpp_nontype_template_args
+// compiler which defines correctly feature test macro (not you clang)
+    #if __cpp_nontype_template_args >= 201911L
+        #define CTLL_CNTTP_COMPILER_CHECK 1
+    #elif __cpp_nontype_template_args >= 201411L
+// appleclang 13+
+      #if defined __apple_build_version__
+        #if defined __clang_major__ && __clang_major__ >= 13
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #else 
+// clang 12+
+        #if defined __clang_major__ && __clang_major__ >= 12
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #endif
+    #endif
+#endif
+
+#ifndef CTLL_CNTTP_COMPILER_CHECK
+    #define CTLL_CNTTP_COMPILER_CHECK 0
+#endif
+
+#ifdef _MSC_VER
+#define CTLL_FORCE_INLINE __forceinline
+#else
+#define CTLL_FORCE_INLINE __attribute__((always_inline))
+#endif
+
+namespace ctll {
+	
+template <bool> struct conditional_helper;
+	
+template <> struct conditional_helper<true> {
+	template <typename A, typename> using type = A;
+};
+
+template <> struct conditional_helper<false> {
+	template <typename, typename B> using type = B;
+};
+
+template <bool V, typename A, typename B> using conditional = typename conditional_helper<V>::template type<A,B>;
+	
+}
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// Queryable diagnostics for failed constexpr parses. is_valid<> stays
+// a plain bool; when it is false, error_info() says WHAT failed and
+// WHERE (kind, byte offset, line, column, the expected terminals) and
+// error_message() renders the whole story as one static string:
+//
+//   ctlark: lexical error at line 1, column 7: no expected terminal matches
+//     [1, 2,]
+//           ^
+//   expected: SIGNED_NUMBER, ']', ESCAPED_STRING
+//
+// Everything is computed at compile time; the message lives in static
+// storage via the same size-pass/fill-pass idiom as tree repr().
+
+namespace ctlark {
+
+// what stage of a parse failed
+CTLL_EXPORT enum class error_kind : unsigned char {
+	none,             // the parse succeeded
+	bad_grammar_text, // the grammar text is not valid Lark
+	bad_grammar,      // the grammar text parsed but does not lower to usable tables
+	no_start_rule,    // the requested start rule is not defined in the grammar
+	lex,              // no expected terminal matches the input at the position
+	parse,            // the token stream does not derive from the start rule
+	overflow,         // an internal pool was exhausted (input too large)
+	depth             // the derivation recursion limit was hit
+};
+
+CTLL_EXPORT constexpr std::string_view to_string(error_kind k) noexcept {
+	switch (k) {
+		case error_kind::none: return "none";
+		case error_kind::bad_grammar_text: return "bad grammar text";
+		case error_kind::bad_grammar: return "bad grammar";
+		case error_kind::no_start_rule: return "no start rule";
+		case error_kind::lex: return "lexical error";
+		case error_kind::parse: return "syntax error";
+		case error_kind::overflow: return "capacity overflow";
+		case error_kind::depth: return "depth limit";
+	}
+	return "unknown";
+}
+
+// a byte offset resolved to 1-based line and column
+CTLL_EXPORT struct source_position {
+	size_t offset = 0;
+	size_t line = 1;
+	size_t column = 1;
+};
+
+CTLL_EXPORT constexpr source_position locate(std::string_view text, size_t offset) noexcept {
+	source_position p{};
+	if (offset > text.size()) { offset = text.size(); }
+	p.offset = offset;
+	for (size_t i = 0; i < offset; ++i) {
+		if (text[i] == '\n') {
+			++p.line;
+			p.column = 1;
+		} else {
+			++p.column;
+		}
+	}
+	return p;
+}
+
+// everything a failed parse knows, as one value. For bad_grammar_text
+// the position refers to the GRAMMAR text; for input failures (lex,
+// parse, overflow, depth) it refers to the input. expected[] holds the
+// terminals some Earley item was waiting for at the failure point -
+// named terminals by name, anonymous literals by their spelling.
+CTLL_EXPORT struct error_info_t {
+	error_kind kind = error_kind::none;
+	size_t position = 0;
+	size_t line = 1;
+	size_t column = 1;
+	std::string_view expected[static_cast<size_t>(detail::expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0; // > expected_count when the list was capped
+
+	constexpr bool ok() const noexcept {
+		return kind == error_kind::none;
+	}
+};
+
+namespace detail {
+
+// display spelling of a terminal: named terminals by name, anonymous
+// keyword literals by their content
+template <typename GT> constexpr bool term_is_literal(const GT & g, int sym) noexcept {
+	return g.syms[sym].keyword && g.syms[sym].lit_off >= 0;
+}
+template <typename GT> constexpr std::string_view term_display(const GT & g, int sym) noexcept {
+	if (term_is_literal(g, sym)) { return g.pool_view(g.syms[sym].lit_off, g.syms[sym].lit_len); }
+	return g.name_of(sym);
+}
+
+// a sink that only measures (the size pass of the render)
+struct count_sink {
+	size_t at = 0;
+	constexpr void put(std::string_view s) noexcept {
+		at += s.size();
+	}
+	constexpr void put_escaped(std::string_view s) noexcept {
+		at += repr_escaped_size(s);
+	}
+};
+
+template <typename Sink> constexpr void put_uint(Sink & s, size_t v) noexcept {
+	char buf[20]{};
+	size_t n = 0;
+	do {
+		buf[n++] = static_cast<char>('0' + v % 10);
+		v /= 10;
+	} while (v > 0);
+	for (size_t i = 0; i < n / 2; ++i) {
+		const char t = buf[i];
+		buf[i] = buf[n - 1 - i];
+		buf[n - 1 - i] = t;
+	}
+	s.put(std::string_view{buf, n});
+}
+
+// the line around pos, windowed so the caret is always visible
+inline constexpr size_t snippet_width = 72;
+inline constexpr size_t snippet_caret_max = 60;
+
+template <typename Sink>
+constexpr void render_snippet(Sink & s, std::string_view text, size_t pos) noexcept {
+	if (pos > text.size()) { pos = text.size(); }
+	size_t ls = pos;
+	while (ls > 0 && text[ls - 1] != '\n') { --ls; }
+	size_t le = pos;
+	while (le < text.size() && text[le] != '\n') { ++le; }
+	size_t ws = ls;
+	if (pos - ws > snippet_caret_max) { ws = pos - snippet_caret_max; }
+	size_t we = le;
+	if (we - ws > snippet_width) { we = ws + snippet_width; }
+	s.put("\n  ");
+	for (size_t i = ws; i < we; ++i) {
+		const char c = text[i];
+		s.put((c == '\t' || c == '\r') ? std::string_view{" "} : text.substr(i, 1));
+	}
+	s.put("\n  ");
+	for (size_t i = ws; i < pos; ++i) { s.put(" "); }
+	s.put("^");
+}
+
+// render the whole diagnostic; runs twice (a size pass with
+// count_sink, then a fill pass with repr_sink into static storage)
+template <typename GT, typename Sink>
+constexpr void render_error(Sink & s, const GT & g, error_kind kind, std::string_view text, size_t pos,
+                            const int * expected, int expected_count, int expected_total,
+                            std::string_view start_rule) noexcept {
+	if (kind == error_kind::none) { return; }
+	if (kind == error_kind::bad_grammar) {
+		s.put(g.error_view());
+		return;
+	}
+	if (kind == error_kind::no_start_rule) {
+		s.put("ctlark: the start rule '");
+		s.put(start_rule);
+		s.put("' is not defined in the grammar");
+		return;
+	}
+
+	const source_position at = locate(text, pos);
+	s.put("ctlark: ");
+	switch (kind) {
+		case error_kind::bad_grammar_text: s.put("the grammar text is not valid Lark"); break;
+		case error_kind::lex: s.put("lexical error"); break;
+		case error_kind::parse: s.put("syntax error"); break;
+		case error_kind::overflow: s.put("capacity overflow"); break;
+		case error_kind::depth: s.put("derivation depth limit hit"); break;
+		default: break;
+	}
+	s.put(" at line ");
+	put_uint(s, at.line);
+	s.put(", column ");
+	put_uint(s, at.column);
+	switch (kind) {
+		case error_kind::bad_grammar_text:
+			break;
+		case error_kind::lex:
+			s.put(": no expected terminal matches");
+			break;
+		case error_kind::parse:
+			s.put(pos >= text.size() ? ": unexpected end of input" : ": the input does not match the grammar here");
+			break;
+		case error_kind::overflow:
+			s.put(": an internal pool was exhausted (the input is too large for the compiled limits)");
+			break;
+		case error_kind::depth:
+			s.put(": the input nests too deeply");
+			break;
+		default:
+			break;
+	}
+	render_snippet(s, text, pos);
+	if (expected_count > 0) {
+		s.put("\nexpected: ");
+		for (int i = 0; i < expected_count; ++i) {
+			if (i > 0) { s.put(", "); }
+			const int sym = expected[i];
+			if (term_is_literal(g, sym)) {
+				s.put("'");
+				s.put_escaped(term_display(g, sym));
+				s.put("'");
+			} else {
+				s.put(term_display(g, sym));
+			}
+		}
+		if (expected_total > expected_count) {
+			s.put(", and ");
+			put_uint(s, static_cast<size_t>(expected_total - expected_count));
+			s.put(" more");
+		}
+	}
+}
+
+// the characters of a def's fixed_string members, as string_views in
+// static storage (fixed_strings hold char32_t units carrying bytes)
+template <typename PD> struct input_text {
+	static constexpr size_t length = PD::in.size();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t make() noexcept {
+		out_t o{};
+		for (size_t i = 0; i < length; ++i) { o.content[i] = static_cast<char>(PD::in[i]); }
+		return o;
+	}
+	static constexpr out_t content = make();
+	static constexpr std::string_view view{content.content, length};
+};
+
+template <typename GD> struct grammar_text {
+	static constexpr size_t length = GD::text.size();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t make() noexcept {
+		out_t o{};
+		for (size_t i = 0; i < length; ++i) { o.content[i] = static_cast<char>(GD::text[i]); }
+		return o;
+	}
+	static constexpr out_t content = make();
+	static constexpr std::string_view view{content.content, length};
+};
+
+template <typename PD> struct start_text {
+	static constexpr size_t length = PD::start_name.size();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t make() noexcept {
+		out_t o{};
+		for (size_t i = 0; i < length; ++i) { o.content[i] = static_cast<char>(PD::start_name[i]); }
+		return o;
+	}
+	static constexpr out_t content = make();
+	static constexpr std::string_view view{content.content, length};
+};
+
+// which error_kind a parse_def failed with (none when it succeeded)
+template <typename PD> constexpr error_kind classify() noexcept {
+	if constexpr (!PD::def::text_ok) {
+		return error_kind::bad_grammar_text;
+	} else if constexpr (!PD::def::tables.ok) {
+		return error_kind::bad_grammar;
+	} else if constexpr (PD::start_sym < 0) {
+		return error_kind::no_start_rule;
+	} else if constexpr (PD::result.ok) {
+		return error_kind::none;
+	} else {
+		switch (PD::result.err) {
+			case perr::lex: return error_kind::lex;
+			case perr::overflow: return error_kind::overflow;
+			case perr::depth: return error_kind::depth;
+			default: return error_kind::parse;
+		}
+	}
+}
+
+template <typename PD> constexpr error_info_t error_info_of() noexcept {
+	error_info_t e{};
+	e.kind = classify<PD>();
+	if constexpr (!PD::def::text_ok) {
+		e.position = PD::def::text_error_pos;
+		const source_position at = locate(grammar_text<typename PD::def>::view, e.position);
+		e.line = at.line;
+		e.column = at.column;
+	} else if constexpr (PD::def::tables.ok && PD::start_sym >= 0) {
+		if constexpr (!PD::result.ok) {
+			e.position = static_cast<size_t>(PD::result.err_pos);
+			const source_position at = locate(input_text<PD>::view, e.position);
+			e.line = at.line;
+			e.column = at.column;
+			e.expected_count = PD::result.expected_count;
+			e.expected_total = PD::result.expected_total;
+			for (int i = 0; i < PD::result.expected_count; ++i) {
+				e.expected[i] = term_display(PD::def::tables, PD::result.expected[i]);
+			}
+		}
+	}
+	return e;
+}
+
+// the rendered message in static storage (only instantiated on demand,
+// and only for failed parses)
+template <typename PD> struct message_storage {
+	static constexpr error_kind kind = classify<PD>();
+
+	static constexpr std::string_view text() noexcept {
+		if constexpr (kind == error_kind::bad_grammar_text) {
+			return grammar_text<typename PD::def>::view;
+		} else {
+			return input_text<PD>::view;
+		}
+	}
+	static constexpr size_t pos() noexcept {
+		if constexpr (kind == error_kind::bad_grammar_text) {
+			return PD::def::text_error_pos;
+		} else {
+			return static_cast<size_t>(PD::result.err_pos);
+		}
+	}
+
+	template <typename Sink> static constexpr void render(Sink & s) noexcept {
+		render_error(s, PD::def::tables, kind, text(), pos(), PD::result.expected, PD::result.expected_count,
+		             PD::result.expected_total, start_text<PD>::view);
+	}
+
+	static constexpr size_t measure() noexcept {
+		count_sink s{};
+		render(s);
+		return s.at;
+	}
+	static constexpr size_t length = measure();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		render(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLARK__LIFT__HPP
+#define CTLARK__LIFT__HPP
+
+#ifndef CTLARK__EARLEY__HPP
+#define CTLARK__EARLEY__HPP
+
+#ifndef CTLARK__COMPILE__HPP
+#define CTLARK__COMPILE__HPP
+
+#ifndef CTLARK__AST__HPP
+#define CTLARK__AST__HPP
+
+#ifndef CTLARK__TEXT__HPP
+#define CTLARK__TEXT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// A compile-time string as a type: one non-type template parameter per
+// character. Used for names and token values throughout - two texts
+// with the same characters are the same TYPE, which is what makes
+// name comparisons and tree lookups plain type equality.
+
+namespace ctlark {
+
+template <auto... Chars> struct text {
+	// null-terminated so c_str()/data() work as C strings; size() excludes it
+	static constexpr char storage[sizeof...(Chars) + 1]{static_cast<char>(Chars)..., '\0'};
+
+	static constexpr const char * c_str() noexcept {
+		return storage;
+	}
+	static constexpr size_t size() noexcept {
+		return sizeof...(Chars);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Chars) == 0;
+	}
+	static constexpr std::string_view view() noexcept {
+		return std::string_view{storage, sizeof...(Chars)};
+	}
+	constexpr operator std::string_view() const noexcept {
+		return view();
+	}
+	template <auto... Rhs> constexpr bool operator==(text<Rhs...>) const noexcept {
+		return view() == text<Rhs...>::view();
+	}
+	friend constexpr bool operator==(text, std::string_view rhs) noexcept {
+		return view() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, text) noexcept {
+		return lhs == view();
+	}
+#if __cplusplus < 202002L
+	template <auto... Rhs> constexpr bool operator!=(text<Rhs...>) const noexcept {
+		return view() != text<Rhs...>::view();
+	}
+	friend constexpr bool operator!=(text, std::string_view rhs) noexcept {
+		return view() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, text) noexcept {
+		return lhs != view();
+	}
+#endif
+};
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// The type-level AST of a Lark grammar, built by the semantic actions
+// (actions.hpp) while CTLL parses the grammar text. Each node knows how
+// to lower itself into the flat constexpr expression program that
+// compile.hpp works with: emit(builder) appends nodes and returns the
+// index of the root it created. The builder is duck-typed (see
+// compile.hpp for the real one) so this header stays independent.
+
+namespace ctlark::ast {
+
+// flat program node kinds
+enum class pk : unsigned char {
+	seq,       // children in order
+	alt,       // children are alternatives
+	star,      // one child, zero or more
+	plus,      // one child, one or more
+	opt,       // one child, zero or one
+	rep,       // one child, a=min, b=max (-1 = unbounded)
+	chr,       // a = the character
+	range,     // a = low, b = high
+	any,       // any character (except newline, unless dotall)
+	str,       // literal string: a = pool offset, b = length
+	cls,       // character class, a = 1 if negated, children are members
+	cw,        // \w   word character
+	cd,        // \d   digit
+	cs,        // \s   whitespace
+	cnw,       // \W
+	cnd,       // \D
+	cns,       // \S
+	rref,      // rule reference, a = symbol id
+	tref,      // terminal reference, a = symbol id
+	ci,        // one child, match case-insensitively
+	dotall,    // one child, any also matches newline
+	rx         // one child, provenance: came from a /regex/ literal
+};
+
+// --- expression nodes
+
+template <typename... Es> struct seq {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::seq);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename... Es> struct alt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::alt);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename E> struct star {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::star);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct plus {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::plus);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct opt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::opt);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E, int Min, int Max> struct rep {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rep, Min, Max);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <auto C> struct chr {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::chr, static_cast<int>(C));
+	}
+};
+
+template <auto Lo, auto Hi> struct crange {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::range, static_cast<int>(Lo), static_cast<int>(Hi));
+	}
+};
+
+struct any_char {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::any);
+	}
+};
+
+template <typename Text, bool Ci> struct lit {
+	using text_type = Text;
+	static constexpr bool case_insensitive = Ci;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_str(Text::view(), Ci);
+	}
+};
+
+struct word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cw); }
+};
+struct digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cd); }
+};
+struct space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cs); }
+};
+struct not_word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnw); }
+};
+struct not_digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnd); }
+};
+struct not_space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cns); }
+};
+
+template <bool Neg, typename... Members> struct cls {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::cls, Neg ? 1 : 0);
+		int last = -1;
+		((last = b.link(self, last, Members::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename Name> struct rule_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), false);
+	}
+};
+
+template <typename Name> struct term_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), true);
+	}
+};
+
+template <typename E> struct ci {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::ci);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct dotall {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::dotall);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// provenance wrapper: this expression came from a /regex/ literal, so
+// in a rule body it is ONE anonymous terminal, not structure
+template <typename E> struct rx {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rx);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// --- one alternative of a definition; Alias is void or a text
+
+template <typename Seq, typename Alias> struct branch { };
+
+namespace detail {
+
+template <typename Br> struct branch_parts;
+template <typename Seq, typename Alias> struct branch_parts<branch<Seq, Alias>> {
+	using seq = Seq;
+	using alias = Alias;
+	static constexpr bool aliased = !std::is_void_v<Alias>;
+	static constexpr std::string_view alias_view() noexcept {
+		if constexpr (aliased) {
+			return Alias::view();
+		} else {
+			return std::string_view{};
+		}
+	}
+};
+
+} // namespace detail
+
+// --- top-level items
+
+template <typename Name, bool Bang, bool Cond, int Priority, typename... Branches> struct rule_def {
+	using name_type = Name;
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_rule(Name::view(), Bang, Cond, Priority);
+		(b.add_alternative(sym, detail::branch_parts<Branches>::seq::emit(b),
+		                   detail::branch_parts<Branches>::alias_view()), ...);
+	}
+};
+
+template <typename Name, int Priority, typename... Branches> struct term_def {
+	using name_type = Name;
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in terminal definitions");
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_term(Name::view(), Priority);
+		(b.add_term_alternative(sym, detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+template <typename... Branches> struct ignore_def {
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in %ignore");
+	template <typename B> static constexpr void collect(B & b) {
+		(b.add_ignore(detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+// %import path -> alias (or the same name); Segs are the path segments
+template <typename Alias, typename... Segs> struct import_def {
+	template <typename B> static constexpr void collect(B & b) {
+		constexpr size_t n = sizeof...(Segs);
+		static_assert(n >= 2, "ctlark: %import needs a dotted path (only common.* is supported)");
+		const std::string_view segs[]{Segs::view()...};
+		b.import_builtin(segs, n, Alias::view());
+	}
+};
+
+// the whole grammar, in source order
+template <typename... Items> struct grammar {
+	static constexpr size_t item_count = sizeof...(Items);
+	template <typename B> static constexpr void collect(B & b) {
+		(Items::collect(b), ...);
+	}
+};
+
+} // namespace ctlark::ast
+
+#endif
+
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
+
+#endif
+
+#ifndef CTLARK__COMMON__HPP
+#define CTLARK__COMMON__HPP
+
+#ifndef CTLARK__AST__HPP
+#define CTLARK__AST__HPP
+
+#ifndef CTLARK__TEXT__HPP
+#define CTLARK__TEXT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// A compile-time string as a type: one non-type template parameter per
+// character. Used for names and token values throughout - two texts
+// with the same characters are the same TYPE, which is what makes
+// name comparisons and tree lookups plain type equality.
+
+namespace ctlark {
+
+template <auto... Chars> struct text {
+	// null-terminated so c_str()/data() work as C strings; size() excludes it
+	static constexpr char storage[sizeof...(Chars) + 1]{static_cast<char>(Chars)..., '\0'};
+
+	static constexpr const char * c_str() noexcept {
+		return storage;
+	}
+	static constexpr size_t size() noexcept {
+		return sizeof...(Chars);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Chars) == 0;
+	}
+	static constexpr std::string_view view() noexcept {
+		return std::string_view{storage, sizeof...(Chars)};
+	}
+	constexpr operator std::string_view() const noexcept {
+		return view();
+	}
+	template <auto... Rhs> constexpr bool operator==(text<Rhs...>) const noexcept {
+		return view() == text<Rhs...>::view();
+	}
+	friend constexpr bool operator==(text, std::string_view rhs) noexcept {
+		return view() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, text) noexcept {
+		return lhs == view();
+	}
+#if __cplusplus < 202002L
+	template <auto... Rhs> constexpr bool operator!=(text<Rhs...>) const noexcept {
+		return view() != text<Rhs...>::view();
+	}
+	friend constexpr bool operator!=(text, std::string_view rhs) noexcept {
+		return view() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, text) noexcept {
+		return lhs != view();
+	}
+#endif
+};
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// The type-level AST of a Lark grammar, built by the semantic actions
+// (actions.hpp) while CTLL parses the grammar text. Each node knows how
+// to lower itself into the flat constexpr expression program that
+// compile.hpp works with: emit(builder) appends nodes and returns the
+// index of the root it created. The builder is duck-typed (see
+// compile.hpp for the real one) so this header stays independent.
+
+namespace ctlark::ast {
+
+// flat program node kinds
+enum class pk : unsigned char {
+	seq,       // children in order
+	alt,       // children are alternatives
+	star,      // one child, zero or more
+	plus,      // one child, one or more
+	opt,       // one child, zero or one
+	rep,       // one child, a=min, b=max (-1 = unbounded)
+	chr,       // a = the character
+	range,     // a = low, b = high
+	any,       // any character (except newline, unless dotall)
+	str,       // literal string: a = pool offset, b = length
+	cls,       // character class, a = 1 if negated, children are members
+	cw,        // \w   word character
+	cd,        // \d   digit
+	cs,        // \s   whitespace
+	cnw,       // \W
+	cnd,       // \D
+	cns,       // \S
+	rref,      // rule reference, a = symbol id
+	tref,      // terminal reference, a = symbol id
+	ci,        // one child, match case-insensitively
+	dotall,    // one child, any also matches newline
+	rx         // one child, provenance: came from a /regex/ literal
+};
+
+// --- expression nodes
+
+template <typename... Es> struct seq {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::seq);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename... Es> struct alt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::alt);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename E> struct star {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::star);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct plus {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::plus);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct opt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::opt);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E, int Min, int Max> struct rep {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rep, Min, Max);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <auto C> struct chr {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::chr, static_cast<int>(C));
+	}
+};
+
+template <auto Lo, auto Hi> struct crange {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::range, static_cast<int>(Lo), static_cast<int>(Hi));
+	}
+};
+
+struct any_char {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::any);
+	}
+};
+
+template <typename Text, bool Ci> struct lit {
+	using text_type = Text;
+	static constexpr bool case_insensitive = Ci;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_str(Text::view(), Ci);
+	}
+};
+
+struct word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cw); }
+};
+struct digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cd); }
+};
+struct space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cs); }
+};
+struct not_word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnw); }
+};
+struct not_digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnd); }
+};
+struct not_space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cns); }
+};
+
+template <bool Neg, typename... Members> struct cls {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::cls, Neg ? 1 : 0);
+		int last = -1;
+		((last = b.link(self, last, Members::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename Name> struct rule_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), false);
+	}
+};
+
+template <typename Name> struct term_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), true);
+	}
+};
+
+template <typename E> struct ci {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::ci);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct dotall {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::dotall);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// provenance wrapper: this expression came from a /regex/ literal, so
+// in a rule body it is ONE anonymous terminal, not structure
+template <typename E> struct rx {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rx);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// --- one alternative of a definition; Alias is void or a text
+
+template <typename Seq, typename Alias> struct branch { };
+
+namespace detail {
+
+template <typename Br> struct branch_parts;
+template <typename Seq, typename Alias> struct branch_parts<branch<Seq, Alias>> {
+	using seq = Seq;
+	using alias = Alias;
+	static constexpr bool aliased = !std::is_void_v<Alias>;
+	static constexpr std::string_view alias_view() noexcept {
+		if constexpr (aliased) {
+			return Alias::view();
+		} else {
+			return std::string_view{};
+		}
+	}
+};
+
+} // namespace detail
+
+// --- top-level items
+
+template <typename Name, bool Bang, bool Cond, int Priority, typename... Branches> struct rule_def {
+	using name_type = Name;
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_rule(Name::view(), Bang, Cond, Priority);
+		(b.add_alternative(sym, detail::branch_parts<Branches>::seq::emit(b),
+		                   detail::branch_parts<Branches>::alias_view()), ...);
+	}
+};
+
+template <typename Name, int Priority, typename... Branches> struct term_def {
+	using name_type = Name;
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in terminal definitions");
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_term(Name::view(), Priority);
+		(b.add_term_alternative(sym, detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+template <typename... Branches> struct ignore_def {
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in %ignore");
+	template <typename B> static constexpr void collect(B & b) {
+		(b.add_ignore(detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+// %import path -> alias (or the same name); Segs are the path segments
+template <typename Alias, typename... Segs> struct import_def {
+	template <typename B> static constexpr void collect(B & b) {
+		constexpr size_t n = sizeof...(Segs);
+		static_assert(n >= 2, "ctlark: %import needs a dotted path (only common.* is supported)");
+		const std::string_view segs[]{Segs::view()...};
+		b.import_builtin(segs, n, Alias::view());
+	}
+};
+
+// the whole grammar, in source order
+template <typename... Items> struct grammar {
+	static constexpr size_t item_count = sizeof...(Items);
+	template <typename B> static constexpr void collect(B & b) {
+		(Items::collect(b), ...);
+	}
+};
+
+} // namespace ctlark::ast
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <string_view>
+#endif
+
+// The supported subset of lark's common.lark, embedded as grammar AST
+// snippets: %import common.X emits the matching pattern and defines it
+// as a terminal. Everything here is self-contained (no references), so
+// imports cannot recurse.
+
+namespace ctlark::detail {
+
+namespace builtin {
+
+using namespace ctlark::ast;
+
+using u_digit = crange<'0', '9'>;
+using u_lcase = crange<'a', 'z'>;
+using u_ucase = crange<'A', 'Z'>;
+using u_letter = cls<false, u_lcase, u_ucase>;
+using u_sign = opt<cls<false, chr<'+'>, chr<'-'>>>;
+
+using DIGIT = u_digit;
+using HEXDIGIT = cls<false, u_digit, crange<'a', 'f'>, crange<'A', 'F'>>;
+using INT = plus<u_digit>;
+using SIGNED_INT = seq<u_sign, INT>;
+// INT "." INT? | "." INT
+using DECIMAL = alt<seq<INT, chr<'.'>, opt<INT>>, seq<chr<'.'>, INT>>;
+using u_exp = seq<cls<false, chr<'e'>, chr<'E'>>, u_sign, INT>;
+using FLOAT = alt<seq<INT, u_exp>, seq<DECIMAL, opt<u_exp>>>;
+using SIGNED_FLOAT = seq<u_sign, FLOAT>;
+using NUMBER = alt<FLOAT, INT>;
+using SIGNED_NUMBER = seq<u_sign, NUMBER>;
+
+// "..." with backslash escapes, single line
+using ESCAPED_STRING = seq<
+	chr<'"'>,
+	star<alt<seq<chr<'\\'>, any_char>,
+	         cls<true, chr<'"'>, chr<'\\'>, chr<'\x0A'>>>>,
+	chr<'"'>>;
+
+using LCASE_LETTER = u_lcase;
+using UCASE_LETTER = u_ucase;
+using LETTER = u_letter;
+using WORD = plus<u_letter>;
+using CNAME = seq<cls<false, chr<'_'>, u_lcase, u_ucase>,
+                  star<cls<false, chr<'_'>, u_lcase, u_ucase, u_digit>>>;
+
+using WS_INLINE = plus<cls<false, chr<' '>, chr<'\x09'>>>;
+using WS = plus<space_class>;
+using CR = chr<'\x0D'>;
+using LF = chr<'\x0A'>;
+using NEWLINE = plus<seq<opt<CR>, LF>>;
+
+using SH_COMMENT = seq<chr<'#'>, star<cls<true, chr<'\x0A'>>>>;
+using CPP_COMMENT = seq<chr<'/'>, chr<'/'>, star<cls<true, chr<'\x0A'>>>>;
+// /* ([^*] | *+[^*/])* *+ /
+using C_COMMENT = seq<
+	chr<'/'>, chr<'*'>,
+	star<alt<cls<true, chr<'*'>>,
+	         seq<plus<chr<'*'>>, cls<true, chr<'*'>, chr<'/'>>>>>,
+	plus<chr<'*'>>, chr<'/'>>;
+using SQL_COMMENT = seq<chr<'-'>, chr<'-'>, star<cls<true, chr<'\x0A'>>>>;
+
+} // namespace builtin
+
+// emit the named builtin into the builder; returns the root node id or
+// -1 when the name is not a supported common.lark terminal
+template <typename B> constexpr int emit_common(std::string_view name, B & b) {
+	if (name == "DIGIT") { return builtin::DIGIT::emit(b); }
+	if (name == "HEXDIGIT") { return builtin::HEXDIGIT::emit(b); }
+	if (name == "INT") { return builtin::INT::emit(b); }
+	if (name == "SIGNED_INT") { return builtin::SIGNED_INT::emit(b); }
+	if (name == "DECIMAL") { return builtin::DECIMAL::emit(b); }
+	if (name == "FLOAT") { return builtin::FLOAT::emit(b); }
+	if (name == "SIGNED_FLOAT") { return builtin::SIGNED_FLOAT::emit(b); }
+	if (name == "NUMBER") { return builtin::NUMBER::emit(b); }
+	if (name == "SIGNED_NUMBER") { return builtin::SIGNED_NUMBER::emit(b); }
+	if (name == "ESCAPED_STRING") { return builtin::ESCAPED_STRING::emit(b); }
+	if (name == "LCASE_LETTER") { return builtin::LCASE_LETTER::emit(b); }
+	if (name == "UCASE_LETTER") { return builtin::UCASE_LETTER::emit(b); }
+	if (name == "LETTER") { return builtin::LETTER::emit(b); }
+	if (name == "WORD") { return builtin::WORD::emit(b); }
+	if (name == "CNAME") { return builtin::CNAME::emit(b); }
+	if (name == "WS_INLINE") { return builtin::WS_INLINE::emit(b); }
+	if (name == "WS") { return builtin::WS::emit(b); }
+	if (name == "CR") { return builtin::CR::emit(b); }
+	if (name == "LF") { return builtin::LF::emit(b); }
+	if (name == "NEWLINE") { return builtin::NEWLINE::emit(b); }
+	if (name == "SH_COMMENT") { return builtin::SH_COMMENT::emit(b); }
+	if (name == "CPP_COMMENT") { return builtin::CPP_COMMENT::emit(b); }
+	if (name == "C_COMMENT") { return builtin::C_COMMENT::emit(b); }
+	if (name == "SQL_COMMENT") { return builtin::SQL_COMMENT::emit(b); }
+	return -1;
+}
+
+} // namespace ctlark::detail
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <cstdint>
+#include <string_view>
+#endif
+
+// Lowering the type-level grammar AST into constexpr tables:
+//
+//   * symbols (rules and terminals) interned by name; string literals
+//     in rule bodies become keyword terminals (merged with an existing
+//     terminal defined as the same literal), regexes and ranges become
+//     anonymous pattern terminals
+//   * quantifiers, groups and alternations inside rule bodies are
+//     desugared into synthetic helper rules marked splice, so the
+//     productions Earley sees are a plain CFG
+//   * every terminal pattern is compiled to a Thompson NFA over bytes
+//     (edges carry 256-bit masks), with terminal-in-terminal
+//     references inlined and case-insensitivity/dotall propagated
+//   * nullability is computed for the Aycock-Horspool Earley fix
+//
+// Everything is plain constexpr evaluation - by the time Earley runs
+// (earley.hpp) the grammar is data, not types. Errors set ok=false
+// and a static message; the entry points static_assert on ok.
+
+namespace ctlark::detail {
+
+using ast::pk;
+
+// capacities, derived from the grammar text length
+template <size_t N> struct climits {
+	static constexpr int nodes = static_cast<int>(4 * N + 320);
+	static constexpr int pool = static_cast<int>(4 * N + 512);
+	static constexpr int syms = static_cast<int>(N + 64);
+	static constexpr int alts = static_cast<int>(N + 32);
+	static constexpr int prods = static_cast<int>(4 * N + 64);
+	static constexpr int rhs = static_cast<int>(8 * N + 128);
+	static constexpr int states = static_cast<int>(16 * N + 1024);
+	static constexpr int edges = static_cast<int>(16 * N + 1024);
+	static constexpr int ignores = 64;
+	static constexpr int max_rhs_len = 128;
+	static constexpr int max_depth = 64;
+};
+
+struct cnode {
+	pk kind;
+	int a;
+	int b;
+	int child;
+	int sib;
+};
+
+struct csym {
+	int name_off;
+	int name_len;
+	bool terminal;
+	bool defined;
+	bool ignored;
+	bool keyword;   // anonymous string literal from a rule body
+	bool anon;      // anonymous pattern terminal
+	bool ci;        // keyword literal with the i flag
+	int lit_off;    // keyword content, for merging (-1 otherwise)
+	int lit_len;
+	int prio;
+	int pattern;    // terminals: root node id (-1 = not defined)
+	bool bang;      // rules: ! keep all tokens
+	bool cond;      // rules: ? inline when a single child
+	bool inlined;   // rules: name starts with _
+	bool splice;    // rules: synthetic helper, always splice children
+	int nfa_start;
+	int nfa_accept;
+};
+
+struct calt {
+	int sym;
+	int root;
+	int alias_off;
+	int alias_len;
+};
+
+struct cprod {
+	int lhs;
+	int rhs_off;
+	int rhs_len;
+	int alias_off;
+	int alias_len;
+};
+
+// a 256-bit byte set
+struct mask256 {
+	std::uint64_t w[4]{};
+	constexpr void set(int c) noexcept {
+		w[(c & 0xFF) >> 6] |= (std::uint64_t{1} << (c & 63));
+	}
+	constexpr bool get(int c) const noexcept {
+		return (w[(c & 0xFF) >> 6] >> (c & 63)) & 1;
+	}
+	constexpr void set_range(int lo, int hi) noexcept {
+		for (int c = lo; c <= hi && c <= 0xFF; ++c) { set(c); }
+	}
+	constexpr void invert() noexcept {
+		for (auto & x : w) { x = ~x; }
+	}
+	constexpr void merge(const mask256 & o) noexcept {
+		for (int i = 0; i < 4; ++i) { w[i] |= o.w[i]; }
+	}
+	// close under ASCII case flipping
+	constexpr void ci_close() noexcept {
+		for (int c = 'a'; c <= 'z'; ++c) {
+			if (get(c)) { set(c - 32); }
+		}
+		for (int c = 'A'; c <= 'Z'; ++c) {
+			if (get(c)) { set(c + 32); }
+		}
+	}
+};
+
+constexpr mask256 mask_digit() noexcept {
+	mask256 m{};
+	m.set_range('0', '9');
+	return m;
+}
+constexpr mask256 mask_word() noexcept {
+	mask256 m = mask_digit();
+	m.set_range('a', 'z');
+	m.set_range('A', 'Z');
+	m.set('_');
+	return m;
+}
+constexpr mask256 mask_space() noexcept {
+	mask256 m{};
+	m.set(' ');
+	m.set_range(0x09, 0x0D); // \t \n \v \f \r
+	return m;
+}
+constexpr mask256 mask_not(mask256 m) noexcept {
+	m.invert();
+	return m;
+}
+
+struct cedge {
+	int to;
+	bool eps;
+	mask256 mask;
+	int next; // next edge of the same state
+};
+
+struct nfa_frag {
+	int in;
+	int out;
+};
+
+// punctuation names for anonymous keyword terminals (lark-style)
+constexpr std::string_view punct_name(char c) noexcept {
+	switch (c) {
+		case '+': return "PLUS";
+		case '-': return "MINUS";
+		case '*': return "STAR";
+		case '/': return "SLASH";
+		case '\\': return "BACKSLASH";
+		case '(': return "LPAR";
+		case ')': return "RPAR";
+		case '[': return "LSQB";
+		case ']': return "RSQB";
+		case '{': return "LBRACE";
+		case '}': return "RBRACE";
+		case ',': return "COMMA";
+		case ';': return "SEMICOLON";
+		case ':': return "COLON";
+		case '=': return "EQUAL";
+		case '.': return "DOT";
+		case '!': return "BANG";
+		case '?': return "QMARK";
+		case '<': return "LESSTHAN";
+		case '>': return "MORETHAN";
+		case '|': return "VBAR";
+		case '&': return "AMPERSAND";
+		case '^': return "CIRCUMFLEX";
+		case '%': return "PERCENT";
+		case '~': return "TILDE";
+		case '@': return "AT";
+		case '#': return "HASH";
+		case '$': return "DOLLAR";
+		case '"': return "DBLQUOTE";
+		case '\'': return "QUOTE";
+		case '`': return "BACKQUOTE";
+		default: return "";
+	}
+}
+
+template <size_t N> struct grammar_tables {
+	using lim = climits<N>;
+
+	bool ok = true;
+	char error[128]{};
+
+	cnode nodes[static_cast<size_t>(lim::nodes)]{};
+	int node_count = 0;
+
+	char pool[static_cast<size_t>(lim::pool)]{};
+	int pool_count = 0;
+
+	csym syms[static_cast<size_t>(lim::syms)]{};
+	int sym_count = 0;
+
+	calt alts[static_cast<size_t>(lim::alts)]{};
+	int alt_count = 0;
+
+	int ignore_roots[static_cast<size_t>(lim::ignores)]{};
+	int ignore_count = 0;
+
+	cprod prods[static_cast<size_t>(lim::prods)]{};
+	int prod_count = 0;
+	int rhs_pool[static_cast<size_t>(lim::rhs)]{};
+	int rhs_count = 0;
+
+	int state_first_edge[static_cast<size_t>(lim::states)]{};
+	int state_count = 0;
+	cedge edges[static_cast<size_t>(lim::edges)]{};
+	int edge_count = 0;
+
+	bool nullable[static_cast<size_t>(lim::syms)]{};
+	int anon_counter = 0;
+	int helper_counter = 0;
+
+	// --- error handling
+
+	constexpr void fail(std::string_view msg) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
+		error[i] = '\0';
+	}
+	constexpr std::string_view error_view() const noexcept {
+		size_t n = 0;
+		while (n < sizeof(error) && error[n] != '\0') { ++n; }
+		return std::string_view{error, n};
+	}
+
+	// --- pools
+
+	constexpr int pool_add(std::string_view s) noexcept {
+		if (pool_count + static_cast<int>(s.size()) > lim::pool) {
+			fail("ctlark: grammar too large (string pool)");
+			return 0;
+		}
+		const int off = pool_count;
+		for (const char c : s) { pool[static_cast<size_t>(pool_count++)] = c; }
+		return off;
+	}
+	constexpr std::string_view pool_view(int off, int len) const noexcept {
+		return std::string_view{pool + off, static_cast<size_t>(len)};
+	}
+	constexpr std::string_view name_of(int sym) const noexcept {
+		return pool_view(syms[sym].name_off, syms[sym].name_len);
+	}
+
+	// --- AST emission interface (called by ast::* nodes)
+
+	constexpr int add(pk kind, int a = 0, int b = 0) noexcept {
+		if (node_count >= lim::nodes) {
+			fail("ctlark: grammar too large (node pool)");
+			return 0;
+		}
+		nodes[node_count] = cnode{kind, a, b, -1, -1};
+		return node_count++;
+	}
+	constexpr int link(int parent, int last, int child) noexcept {
+		if (!ok) { return child; }
+		if (last < 0) {
+			nodes[parent].child = child;
+		} else {
+			nodes[last].sib = child;
+		}
+		return child;
+	}
+	constexpr int add_str(std::string_view s, bool ci) noexcept {
+		const int off = pool_add(s);
+		const int n = add(pk::str, off, static_cast<int>(s.size()));
+		if (ci) {
+			const int w = add(pk::ci);
+			if (ok) { nodes[w].child = n; }
+			return w;
+		}
+		return n;
+	}
+	constexpr int intern(std::string_view name, bool terminal) noexcept {
+		for (int i = 0; i < sym_count; ++i) {
+			if (syms[i].terminal == terminal && name_of(i) == name) { return i; }
+		}
+		if (sym_count >= lim::syms) {
+			fail("ctlark: grammar too large (symbols)");
+			return 0;
+		}
+		csym s{};
+		s.name_off = pool_add(name);
+		s.name_len = static_cast<int>(name.size());
+		s.terminal = terminal;
+		s.lit_off = -1;
+		s.lit_len = 0;
+		s.pattern = -1;
+		s.nfa_start = -1;
+		s.nfa_accept = -1;
+		s.inlined = !terminal && !name.empty() && name[0] == '_';
+		syms[sym_count] = s;
+		return sym_count++;
+	}
+	constexpr int add_ref(std::string_view name, bool terminal) noexcept {
+		return add(terminal ? pk::tref : pk::rref, intern(name, terminal));
+	}
+	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
+		const int s = intern(name, false);
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
+		syms[s].defined = true;
+		syms[s].bang = bang;
+		syms[s].cond = cond;
+		syms[s].prio = prio;
+		return s;
+	}
+	constexpr int def_term(std::string_view name, int prio) noexcept {
+		const int s = intern(name, true);
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
+		syms[s].defined = true;
+		syms[s].prio = prio;
+		return s;
+	}
+	constexpr void add_alternative(int sym, int root, std::string_view alias) noexcept {
+		if (alt_count >= lim::alts) {
+			fail("ctlark: grammar too large (alternatives)");
+			return;
+		}
+		const int aoff = alias.empty() ? -1 : pool_add(alias);
+		alts[alt_count++] = calt{sym, root, aoff, static_cast<int>(alias.size())};
+	}
+	constexpr void add_term_alternative(int sym, int root) noexcept {
+		if (!ok) { return; }
+		if (syms[sym].pattern < 0) {
+			syms[sym].pattern = root;
+			return;
+		}
+		// further alternatives merge under an alt node
+		const int existing = syms[sym].pattern;
+		if (nodes[existing].kind == pk::alt) {
+			int last = nodes[existing].child;
+			while (last >= 0 && nodes[last].sib >= 0) { last = nodes[last].sib; }
+			nodes[last].sib = root;
+		} else {
+			const int a = add(pk::alt);
+			if (!ok) { return; }
+			nodes[a].child = existing;
+			nodes[existing].sib = root;
+			syms[sym].pattern = a;
+		}
+	}
+	constexpr void add_ignore(int root) noexcept {
+		if (ignore_count >= lim::ignores) {
+			fail("ctlark: too many %ignore statements");
+			return;
+		}
+		ignore_roots[ignore_count++] = root;
+	}
+	constexpr void import_builtin(const std::string_view * segs, size_t n, std::string_view alias) noexcept {
+		if (n != 2 || segs[0] != "common") {
+			fail("ctlark: %import supports only common.<NAME>");
+			return;
+		}
+		const int root = emit_common(segs[1], *this);
+		if (root < 0) {
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
+			return;
+		}
+		const int s = intern(alias, true);
+		if (syms[s].defined) {
+			fail("ctlark: duplicate terminal definition (%import)", alias);
+			return;
+		}
+		syms[s].defined = true;
+		syms[s].pattern = root;
+	}
+
+	// --- lowering rule bodies to productions
+
+	struct rhs_buf {
+		int ids[static_cast<size_t>(lim::max_rhs_len)]{};
+		int len = 0;
+	};
+
+	constexpr void buf_push(rhs_buf & b, int sym) noexcept {
+		if (b.len >= lim::max_rhs_len) {
+			fail("ctlark: rule alternative too long");
+			return;
+		}
+		b.ids[b.len++] = sym;
+	}
+
+	constexpr void add_prod(int lhs, const rhs_buf & b, int alias_off, int alias_len) noexcept {
+		if (prod_count >= lim::prods || rhs_count + b.len > lim::rhs) {
+			fail("ctlark: grammar too large (productions)");
+			return;
+		}
+		const int off = rhs_count;
+		for (int i = 0; i < b.len; ++i) { rhs_pool[rhs_count++] = b.ids[i]; }
+		prods[prod_count++] = cprod{lhs, off, b.len, alias_off, alias_len};
+	}
+
+	constexpr int new_helper() noexcept {
+		char name[16]{'_', '_', 'h'};
+		int len = 3;
+		int v = helper_counter++;
+		char digits[8]{};
+		int nd = 0;
+		do {
+			digits[nd++] = static_cast<char>('0' + v % 10);
+			v /= 10;
+		} while (v > 0);
+		while (nd > 0) { name[len++] = digits[--nd]; }
+		const int s = intern(std::string_view{name, static_cast<size_t>(len)}, false);
+		syms[s].defined = true;
+		syms[s].splice = true;
+		return s;
+	}
+
+	constexpr int new_anon_pattern(int root) noexcept {
+		char name[20]{'_', '_', 'a', 'n', 'o', 'n', '_'};
+		int len = 7;
+		int v = anon_counter++;
+		char digits[8]{};
+		int nd = 0;
+		do {
+			digits[nd++] = static_cast<char>('0' + v % 10);
+			v /= 10;
+		} while (v > 0);
+		while (nd > 0) { name[len++] = digits[--nd]; }
+		const int s = intern(std::string_view{name, static_cast<size_t>(len)}, true);
+		syms[s].defined = true;
+		syms[s].anon = true;
+		syms[s].pattern = root;
+		return s;
+	}
+
+	// a keyword terminal for a string literal in a rule body; merged
+	// with an existing identical keyword, or with a defined terminal
+	// whose whole pattern is the same literal
+	constexpr int keyword_sym(int str_node, bool ci) noexcept {
+		const int off = nodes[str_node].a;
+		const int len = nodes[str_node].b;
+		const std::string_view content = pool_view(off, len);
+		for (int i = 0; i < sym_count; ++i) {
+			if (!syms[i].terminal) { continue; }
+			if (syms[i].keyword && syms[i].ci == ci && pool_view(syms[i].lit_off, syms[i].lit_len) == content) {
+				return i;
+			}
+			// a user terminal defined as exactly this literal
+			if (syms[i].defined && !syms[i].keyword && syms[i].pattern >= 0) {
+				int p = syms[i].pattern;
+				bool pci = false;
+				if (nodes[p].kind == pk::ci && nodes[p].child >= 0 && nodes[nodes[p].child].sib < 0) {
+					pci = true;
+					p = nodes[p].child;
+				}
+				// terminal bodies are seq-rooted; unwrap single-child seqs
+				while (nodes[p].kind == pk::seq && nodes[p].child >= 0 && nodes[nodes[p].child].sib < 0) {
+					p = nodes[p].child;
+					if (nodes[p].kind == pk::ci && nodes[p].child >= 0) {
+						pci = true;
+						p = nodes[p].child;
+					}
+				}
+				if (nodes[p].kind == pk::str && pci == ci && pool_view(nodes[p].a, nodes[p].b) == content) {
+					return i;
+				}
+			}
+		}
+		// name it like lark does: IF for word literals, PLUS for + ...
+		char name[64]{};
+		int nlen = 0;
+		bool wordy = !content.empty();
+		for (const char c : content) {
+			const bool w = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+			if (!w) { wordy = false; }
+		}
+		if (wordy && content.size() < 32 && !(content[0] >= '0' && content[0] <= '9')) {
+			for (const char c : content) {
+				name[nlen++] = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 32) : c;
+			}
+		} else if (!content.empty() && content.size() * 12 < 60) {
+			bool all_punct = true;
+			for (const char c : content) {
+				if (punct_name(c).empty()) { all_punct = false; }
+			}
+			if (all_punct) {
+				for (const char c : content) {
+					if (nlen > 0) { name[nlen++] = '_'; }
+					for (const char pc : punct_name(c)) { name[nlen++] = pc; }
+				}
+			}
+		}
+		if (nlen == 0) {
+			return finish_keyword(new_anon_pattern(str_node), str_node, ci);
+		}
+		// collision with an existing symbol name gets the anon treatment
+		for (int i = 0; i < sym_count; ++i) {
+			if (syms[i].terminal && name_of(i) == std::string_view{name, static_cast<size_t>(nlen)}) {
+				return finish_keyword(new_anon_pattern(str_node), str_node, ci);
+			}
+		}
+		const int s = intern(std::string_view{name, static_cast<size_t>(nlen)}, true);
+		syms[s].defined = true;
+		syms[s].pattern = ci ? wrap_ci(str_node) : str_node;
+		return finish_keyword(s, str_node, ci);
+	}
+
+	constexpr int wrap_ci(int node) noexcept {
+		const int w = add(pk::ci);
+		if (ok) { nodes[w].child = node; }
+		return w;
+	}
+
+	constexpr int finish_keyword(int s, int str_node, bool ci) noexcept {
+		syms[s].keyword = true;
+		syms[s].ci = ci;
+		syms[s].lit_off = nodes[str_node].a;
+		syms[s].lit_len = nodes[str_node].b;
+		if (syms[s].anon) { syms[s].pattern = ci ? wrap_ci(str_node) : str_node; }
+		return s;
+	}
+
+	// does this subtree contain a rule reference?
+	constexpr bool has_rref(int node, int depth = 0) const noexcept {
+		if (node < 0 || depth > lim::max_depth) { return false; }
+		if (nodes[node].kind == pk::rref) { return true; }
+		for (int c = nodes[node].child; c >= 0; c = nodes[c].sib) {
+			if (has_rref(c, depth + 1)) { return true; }
+		}
+		return false;
+	}
+
+	// lower one expression node into a symbol sequence
+	constexpr void lower_into(rhs_buf & out, int node, int depth) noexcept {
+		if (!ok) { return; }
+		if (depth > lim::max_depth) {
+			fail("ctlark: rule body too deeply nested");
+			return;
+		}
+		const cnode & n = nodes[node];
+		switch (n.kind) {
+			case pk::seq:
+				for (int c = n.child; c >= 0; c = nodes[c].sib) { lower_into(out, c, depth + 1); }
+				return;
+			case pk::rref:
+			case pk::tref:
+				buf_push(out, n.a);
+				return;
+			case pk::str:
+				buf_push(out, keyword_sym(node, false));
+				return;
+			case pk::ci:
+				if (n.child >= 0 && nodes[n.child].kind == pk::str) {
+					buf_push(out, keyword_sym(n.child, true));
+				} else {
+					buf_push(out, new_anon_pattern(node));
+				}
+				return;
+			case pk::rx:
+			case pk::dotall:
+			case pk::range:
+			case pk::any:
+			case pk::chr:
+			case pk::cls:
+			case pk::cw:
+			case pk::cd:
+			case pk::cs:
+			case pk::cnw:
+			case pk::cnd:
+			case pk::cns:
+				buf_push(out, new_anon_pattern(node));
+				return;
+			case pk::alt: {
+				const int h = new_helper();
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					rhs_buf t{};
+					lower_into(t, c, depth + 1);
+					add_prod(h, t, -1, 0);
+				}
+				buf_push(out, h);
+				return;
+			}
+			case pk::star: {
+				const int h = new_helper();
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				rhs_buf rec{};
+				buf_push(rec, h);
+				for (int i = 0; i < one.len; ++i) { buf_push(rec, one.ids[i]); }
+				add_prod(h, rec, -1, 0);
+				const rhs_buf empty{};
+				add_prod(h, empty, -1, 0);
+				buf_push(out, h);
+				return;
+			}
+			case pk::plus: {
+				const int h = new_helper();
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				rhs_buf rec{};
+				buf_push(rec, h);
+				for (int i = 0; i < one.len; ++i) { buf_push(rec, one.ids[i]); }
+				add_prod(h, rec, -1, 0);
+				add_prod(h, one, -1, 0);
+				buf_push(out, h);
+				return;
+			}
+			case pk::opt: {
+				const int h = new_helper();
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				add_prod(h, one, -1, 0);
+				const rhs_buf empty{};
+				add_prod(h, empty, -1, 0);
+				buf_push(out, h);
+				return;
+			}
+			case pk::rep: {
+				const int lo = n.a;
+				const int hi = n.b;
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				for (int k = 0; k < lo; ++k) {
+					for (int i = 0; i < one.len; ++i) { buf_push(out, one.ids[i]); }
+				}
+				if (hi < 0) {
+					// open repetition: a star helper
+					const int h = new_helper();
+					rhs_buf rec{};
+					buf_push(rec, h);
+					for (int i = 0; i < one.len; ++i) { buf_push(rec, one.ids[i]); }
+					add_prod(h, rec, -1, 0);
+					const rhs_buf empty{};
+					add_prod(h, empty, -1, 0);
+					buf_push(out, h);
+				} else if (hi > lo) {
+					const int h = new_helper();
+					add_prod(h, one, -1, 0);
+					const rhs_buf empty{};
+					add_prod(h, empty, -1, 0);
+					for (int k = lo; k < hi; ++k) { buf_push(out, h); }
+				}
+				return;
+			}
+		}
+		fail("ctlark: unexpected node in a rule body");
+	}
+
+	// --- %ignore resolution
+
+	constexpr void resolve_ignores() noexcept {
+		for (int i = 0; i < ignore_count && ok; ++i) {
+			int root = ignore_roots[i];
+			// unwrap single-child seqs
+			while (nodes[root].kind == pk::seq && nodes[root].child >= 0 && nodes[nodes[root].child].sib < 0) {
+				root = nodes[root].child;
+			}
+			if (nodes[root].kind == pk::tref) {
+				syms[nodes[root].a].ignored = true;
+				continue;
+			}
+			if (has_rref(root)) {
+				fail("ctlark: %ignore must be a terminal pattern");
+				return;
+			}
+			if (nodes[root].kind == pk::str) {
+				syms[keyword_sym(root, false)].ignored = true;
+			} else if (nodes[root].kind == pk::ci && nodes[root].child >= 0 && nodes[nodes[root].child].kind == pk::str) {
+				syms[keyword_sym(nodes[root].child, true)].ignored = true;
+			} else {
+				syms[new_anon_pattern(root)].ignored = true;
+			}
+		}
+	}
+
+	// --- NFA construction
+
+	constexpr int new_state() noexcept {
+		if (state_count >= lim::states) {
+			fail("ctlark: terminal patterns too large (states)");
+			return 0;
+		}
+		state_first_edge[state_count] = -1;
+		return state_count++;
+	}
+	constexpr void add_edge(int from, int to, bool eps, mask256 mask = {}) noexcept {
+		if (edge_count >= lim::edges) {
+			fail("ctlark: terminal patterns too large (edges)");
+			return;
+		}
+		edges[edge_count] = cedge{to, eps, mask, state_first_edge[from]};
+		state_first_edge[from] = edge_count++;
+	}
+
+	constexpr mask256 member_mask(int node, bool ci) const noexcept {
+		mask256 m{};
+		const cnode & n = nodes[node];
+		switch (n.kind) {
+			case pk::chr: m.set(n.a); break;
+			case pk::range: m.set_range(n.a, n.b); break;
+			case pk::cw: m = mask_word(); break;
+			case pk::cd: m = mask_digit(); break;
+			case pk::cs: m = mask_space(); break;
+			case pk::cnw: m = mask_not(mask_word()); break;
+			case pk::cnd: m = mask_not(mask_digit()); break;
+			case pk::cns: m = mask_not(mask_space()); break;
+			default: break;
+		}
+		if (ci) { m.ci_close(); }
+		return m;
+	}
+
+	constexpr nfa_frag char_frag(mask256 m) noexcept {
+		const int in = new_state();
+		const int out = new_state();
+		add_edge(in, out, false, m);
+		return nfa_frag{in, out};
+	}
+
+	constexpr nfa_frag emit_nfa(int node, bool ci, bool dot, int depth) noexcept {
+		if (!ok) { return nfa_frag{0, 0}; }
+		if (depth > lim::max_depth) {
+			fail("ctlark: terminal pattern too deep (recursive terminals are not supported)");
+			return nfa_frag{0, 0};
+		}
+		const cnode & n = nodes[node];
+		switch (n.kind) {
+			case pk::seq: {
+				nfa_frag f{new_state(), -1};
+				f.out = f.in;
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					const nfa_frag g = emit_nfa(c, ci, dot, depth + 1);
+					add_edge(f.out, g.in, true);
+					f.out = g.out;
+				}
+				return f;
+			}
+			case pk::alt: {
+				const int in = new_state();
+				const int out = new_state();
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					const nfa_frag g = emit_nfa(c, ci, dot, depth + 1);
+					add_edge(in, g.in, true);
+					add_edge(g.out, out, true);
+				}
+				return nfa_frag{in, out};
+			}
+			case pk::star: {
+				const int in = new_state();
+				const int out = new_state();
+				const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+				add_edge(in, g.in, true);
+				add_edge(in, out, true);
+				add_edge(g.out, g.in, true);
+				add_edge(g.out, out, true);
+				return nfa_frag{in, out};
+			}
+			case pk::plus: {
+				const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+				add_edge(g.out, g.in, true);
+				return g;
+			}
+			case pk::opt: {
+				const int in = new_state();
+				const int out = new_state();
+				const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+				add_edge(in, g.in, true);
+				add_edge(in, out, true);
+				add_edge(g.out, out, true);
+				return nfa_frag{in, out};
+			}
+			case pk::rep: {
+				const int lo = n.a;
+				const int hi = n.b;
+				nfa_frag f{new_state(), -1};
+				f.out = f.in;
+				for (int k = 0; k < lo; ++k) {
+					const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+					add_edge(f.out, g.in, true);
+					f.out = g.out;
+				}
+				if (hi < 0) {
+					const int in2 = new_state();
+					const int out2 = new_state();
+					const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+					add_edge(f.out, in2, true);
+					add_edge(in2, g.in, true);
+					add_edge(in2, out2, true);
+					add_edge(g.out, g.in, true);
+					add_edge(g.out, out2, true);
+					f.out = out2;
+				} else {
+					for (int k = lo; k < hi; ++k) {
+						const int in2 = new_state();
+						const int out2 = new_state();
+						const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+						add_edge(f.out, in2, true);
+						add_edge(in2, g.in, true);
+						add_edge(in2, out2, true);
+						add_edge(g.out, out2, true);
+						f.out = out2;
+					}
+				}
+				return f;
+			}
+			case pk::chr:
+			case pk::range:
+			case pk::cw:
+			case pk::cd:
+			case pk::cs:
+			case pk::cnw:
+			case pk::cnd:
+			case pk::cns:
+				return char_frag(member_mask(node, ci));
+			case pk::any: {
+				mask256 m{};
+				m.invert();
+				if (!dot) {
+					mask256 nl{};
+					nl.set(0x0A);
+					nl.invert();
+					for (int i = 0; i < 4; ++i) { m.w[i] &= nl.w[i]; }
+				}
+				return char_frag(m);
+			}
+			case pk::str: {
+				nfa_frag f{new_state(), -1};
+				f.out = f.in;
+				const std::string_view s = pool_view(n.a, n.b);
+				for (const char c : s) {
+					mask256 m{};
+					m.set(static_cast<unsigned char>(c));
+					if (ci) { m.ci_close(); }
+					const int to = new_state();
+					add_edge(f.out, to, false, m);
+					f.out = to;
+				}
+				return f;
+			}
+			case pk::cls: {
+				mask256 m{};
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					m.merge(member_mask(c, false));
+				}
+				// case closure applies to the MEMBERS, then negation
+				// complements the closed set: [^a]i excludes both a
+				// and A (closing after inverting would instead ADD the
+				// flipped cases to the matches)
+				if (ci) { m.ci_close(); }
+				if (n.a) { m.invert(); }
+				return char_frag(m);
+			}
+			case pk::ci:
+				return emit_nfa(n.child, true, dot, depth + 1);
+			case pk::dotall:
+				return emit_nfa(n.child, ci, true, depth + 1);
+			case pk::rx:
+				return emit_nfa(n.child, ci, dot, depth + 1);
+			case pk::tref: {
+				const int t = n.a;
+				if (syms[t].pattern < 0) {
+					fail("ctlark: reference to an undefined terminal", name_of(t));
+					return nfa_frag{0, 0};
+				}
+				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
+			}
+			case pk::rref:
+				fail("ctlark: rule reference inside a terminal");
+				return nfa_frag{0, 0};
+		}
+		fail("ctlark: unexpected node in a terminal pattern");
+		return nfa_frag{0, 0};
+	}
+
+	constexpr void build_term_nfa(int s) noexcept {
+		if (!ok || syms[s].pattern < 0) { return; }
+		const nfa_frag f = emit_nfa(syms[s].pattern, false, false, 0);
+		syms[s].nfa_start = f.in;
+		syms[s].nfa_accept = f.out;
+	}
+
+	// --- checks and closures
+
+	constexpr void validate() noexcept {
+		for (int i = 0; i < sym_count && ok; ++i) {
+			if (syms[i].terminal) {
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
+			} else {
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
+			}
+		}
+	}
+
+	constexpr void compute_nullable() noexcept {
+		bool changed = true;
+		while (changed) {
+			changed = false;
+			for (int p = 0; p < prod_count; ++p) {
+				if (nullable[prods[p].lhs]) { continue; }
+				bool all = true;
+				for (int i = 0; i < prods[p].rhs_len; ++i) {
+					const int s = rhs_pool[prods[p].rhs_off + i];
+					if (syms[s].terminal || !nullable[s]) {
+						all = false;
+						break;
+					}
+				}
+				if (all) {
+					nullable[prods[p].lhs] = true;
+					changed = true;
+				}
+			}
+		}
+	}
+
+	constexpr int find_rule(std::string_view name) const noexcept {
+		for (int i = 0; i < sym_count; ++i) {
+			if (!syms[i].terminal && name_of(i) == name) { return i; }
+		}
+		return -1;
+	}
+
+	// --- the driver
+
+	constexpr void finish() noexcept {
+		if (!ok) { return; }
+		resolve_ignores();
+		const int n_alts = alt_count; // helpers do not add alts
+		for (int i = 0; i < n_alts && ok; ++i) {
+			rhs_buf b{};
+			lower_into(b, alts[i].root, 0);
+			add_prod(alts[i].sym, b, alts[i].alias_off, alts[i].alias_len);
+		}
+		for (int s = 0; s < sym_count && ok; ++s) {
+			if (syms[s].terminal) { build_term_nfa(s); }
+		}
+		validate();
+		compute_nullable();
+	}
+
+	// should this terminal's tokens be dropped from trees by default?
+	constexpr bool filtered(int s) const noexcept {
+		return syms[s].keyword || syms[s].anon
+		    || (syms[s].name_len > 0 && pool[syms[s].name_off] == '_');
+	}
+};
+
+// build the tables from a type-level grammar AST
+template <typename Ast, size_t N> constexpr auto compile_tables() noexcept {
+	grammar_tables<N> g{};
+	Ast::collect(g);
+	g.finish();
+	return g;
+}
+
+} // namespace ctlark::detail
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// The compile-time parsing pipeline over the lowered grammar tables:
+//
+//   1. lexer: all terminal NFAs simulated together, longest match wins
+//      (ties: explicit priority, then literals over patterns, then
+//      definition order); %ignore'd terminals are dropped
+//   2. Earley over the token stream - handles every context-free
+//      grammar, including left recursion and ambiguity, with the
+//      Aycock-Horspool nullable fix
+//   3. derivation extraction with lark's tree shaping: helper rules
+//      from desugaring and _rules splice, ?rules inline when they have
+//      a single child, anonymous/keyword/_TERMINAL tokens are filtered
+//      (kept under !rules), -> aliases rename
+//
+// The result is a flat constexpr node array that lift.hpp raises into
+// Tree/Token types. Ambiguous derivations are resolved
+// deterministically: first-listed alternative, then longest-first
+// splits.
+
+namespace ctlark::detail {
+
+enum class perr : unsigned char {
+	none,
+	lex,       // no terminal matches at err_pos
+	parse,     // the token stream does not derive from the start rule
+	overflow,  // an internal pool was exhausted
+	depth      // derivation recursion limit (cyclic nullable rules)
+};
+
+struct eitem {
+	int prod;
+	int dot;
+	int origin;
+};
+
+// one node of the extracted parse tree; names and values are spans
+// into the grammar's string pool and the input, respectively
+struct rnode {
+	bool is_token;
+	int name_off;
+	int name_len;
+	int val_off;    // tokens: value span in the input
+	int val_len;
+	int child_off;  // trees: children in parse_result::children
+	int child_count;
+};
+
+// how many expected terminals a failure records (the true count is
+// kept separately so a diagnostic can say "... and N more")
+inline constexpr int expected_cap = 12;
+
+template <size_t M> struct parse_result {
+	static constexpr int node_cap = static_cast<int>(8 * (M + 2) + 128);
+	static constexpr int child_cap = static_cast<int>(8 * (M + 2) + 128);
+
+	bool ok = false;
+	perr err = perr::none;
+	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	rnode nodes[static_cast<size_t>(node_cap)]{};
+	int node_count = 0;
+	int children[static_cast<size_t>(child_cap)]{};
+	int child_count = 0;
+	int root = -1;
+};
+
+// --- the contextual lexer + Earley pipeline
+//
+// Lexing is interleaved with parsing, like lark's contextual lexers:
+// after an Earley set is closed, only the terminals some item expects
+// (plus the %ignore set) are candidates at the current position. That
+// is what lets keyword-vs-identifier and XML-style tag-vs-text
+// languages tokenize: "true" lexes as an unquoted key where a key is
+// expected and as the keyword where a value is.
+
+struct lex_token {
+	int sym;
+	int off;
+	int len;
+};
+
+// the number of dotted positions, an upper bound on distinct
+// (prod, dot) pairs per set
+template <typename GT> constexpr int dotted_positions(const GT & g) noexcept {
+	int d = 0;
+	for (int p = 0; p < g.prod_count; ++p) { d += g.prods[p].rhs_len + 1; }
+	return d;
+}
+
+template <typename GT, int ItemCap, int SetCap> struct chart {
+	eitem items[static_cast<size_t>(ItemCap)]{};
+	int item_count = 0;
+	int set_off[static_cast<size_t>(SetCap)]{};
+	int set_count = 0;
+	bool overflow = false;
+
+	constexpr bool contains(int from, int prod, int dot, int origin) const noexcept {
+		for (int i = from; i < item_count; ++i) {
+			if (items[i].prod == prod && items[i].dot == dot && items[i].origin == origin) { return true; }
+		}
+		return false;
+	}
+	constexpr void push(int set_start, int prod, int dot, int origin) noexcept {
+		if (contains(set_start, prod, dot, origin)) { return; }
+		if (item_count >= ItemCap) {
+			overflow = true;
+			return;
+		}
+		items[item_count++] = eitem{prod, dot, origin};
+	}
+};
+
+template <typename GT, size_t M> struct pipeline_result {
+	lex_token toks[M + 1]{};
+	int count = 0;
+	bool ok = false;
+	perr err = perr::none;
+	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	// keep the terminals some Earley item expected at the failure point
+	constexpr void record_expected(const bool * exp, int sym_count) noexcept {
+		for (int t = 0; t < sym_count; ++t) {
+			if (!exp[t]) { continue; }
+			if (expected_count < expected_cap) { expected[expected_count++] = t; }
+			++expected_total;
+		}
+	}
+};
+
+// close set i: run predictions and completions to a fixpoint
+template <typename GT, int ItemCap, int SetCap>
+constexpr void close_set(const GT & g, chart<GT, ItemCap, SetCap> & ch, int i) noexcept {
+	const int set_start = ch.set_off[i];
+	for (int ix = set_start; ix < ch.item_count && !ch.overflow; ++ix) {
+		const eitem it = ch.items[ix];
+		const cprod & pr = g.prods[it.prod];
+		if (it.dot < pr.rhs_len) {
+			const int nxt_sym = g.rhs_pool[pr.rhs_off + it.dot];
+			if (!g.syms[nxt_sym].terminal) {
+				// predict
+				for (int p = 0; p < g.prod_count; ++p) {
+					if (g.prods[p].lhs == nxt_sym) { ch.push(set_start, p, 0, i); }
+				}
+				// Aycock-Horspool: nullable nonterminals also advance
+				if (g.nullable[nxt_sym]) { ch.push(set_start, it.prod, it.dot + 1, it.origin); }
+			}
+		} else {
+			// complete
+			const int lhs = pr.lhs;
+			const int parent_end = it.origin == i ? ch.item_count : ch.set_off[it.origin + 1];
+			for (int j = ch.set_off[it.origin]; j < parent_end; ++j) {
+				const eitem parent = ch.items[j];
+				const cprod & ppr = g.prods[parent.prod];
+				if (parent.dot < ppr.rhs_len && g.rhs_pool[ppr.rhs_off + parent.dot] == lhs) {
+					ch.push(set_start, parent.prod, parent.dot + 1, parent.origin);
+				}
+			}
+		}
+	}
+}
+
+// is the start rule completed over the whole token span?
+template <typename GT, int ItemCap, int SetCap>
+constexpr bool accepted(const GT & g, int start_sym, const chart<GT, ItemCap, SetCap> & ch, int i) noexcept {
+	for (int ix = ch.set_off[i]; ix < ch.item_count; ++ix) {
+		const eitem it = ch.items[ix];
+		if (g.prods[it.prod].lhs == start_sym && it.origin == 0 && it.dot == g.prods[it.prod].rhs_len) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// a tracer that traces nothing: every trace call is guarded by
+// `if constexpr (Tracer::enabled)`, so the disabled form costs zero
+// constexpr steps (debug.hpp provides the recording trace_log)
+struct null_tracer {
+	static constexpr bool enabled = false;
+};
+
+// the interleaved pipeline: close a set, lex among expected terminals,
+// scan, repeat
+template <typename GT, size_t M, int ItemCap, int SetCap, typename Tracer = null_tracer>
+constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::string_view in,
+                                              chart<GT, ItemCap, SetCap> & ch, Tracer * tr = nullptr) noexcept {
+	pipeline_result<GT, M> r{};
+	bool expected[static_cast<size_t>(GT::lim::syms)]{};
+	bool cur[static_cast<size_t>(GT::lim::states)]{};
+	bool nxt[static_cast<size_t>(GT::lim::states)]{};
+	int accept_len[static_cast<size_t>(GT::lim::syms)]{};
+
+	ch.set_off[0] = 0;
+	for (int p = 0; p < g.prod_count; ++p) {
+		if (g.prods[p].lhs == start_sym) { ch.push(0, p, 0, 0); }
+	}
+
+	size_t pos = 0;
+	int i = 0;
+	while (true) {
+		close_set(g, ch, i);
+		ch.set_off[i + 1] = ch.item_count;
+		ch.set_count = i + 2;
+		if constexpr (Tracer::enabled) {
+			tr->event("earley: set closed (set, items)", {}, i, ch.set_off[i + 1] - ch.set_off[i]);
+		}
+		if (ch.overflow) {
+			if constexpr (Tracer::enabled) { tr->event("earley: chart overflow", {}, i); }
+			r.err = perr::overflow;
+			return r;
+		}
+
+		// which terminals does some item expect here?
+		for (int t = 0; t < g.sym_count; ++t) { expected[t] = false; }
+		for (int ix = ch.set_off[i]; ix < ch.set_off[i + 1]; ++ix) {
+			const eitem it = ch.items[ix];
+			const cprod & pr = g.prods[it.prod];
+			if (it.dot < pr.rhs_len) {
+				const int nxt_sym = g.rhs_pool[pr.rhs_off + it.dot];
+				if (g.syms[nxt_sym].terminal) { expected[nxt_sym] = true; }
+			}
+		}
+
+		// lex: expected terminals plus the ignored ones; skips loop here
+		int winner = -1;
+		while (pos < in.size()) {
+			for (int s = 0; s < g.state_count; ++s) { cur[s] = false; }
+			for (int t = 0; t < g.sym_count; ++t) {
+				accept_len[t] = -1;
+				if (g.syms[t].terminal && g.syms[t].nfa_start >= 0 && (expected[t] || g.syms[t].ignored)) {
+					cur[g.syms[t].nfa_start] = true;
+				}
+			}
+			int len = 0;
+			bool alive = true;
+			while (alive) {
+				bool grew = true;
+				while (grew) {
+					grew = false;
+					for (int s = 0; s < g.state_count; ++s) {
+						if (!cur[s]) { continue; }
+						for (int e = g.state_first_edge[s]; e >= 0; e = g.edges[e].next) {
+							if (g.edges[e].eps && !cur[g.edges[e].to]) {
+								cur[g.edges[e].to] = true;
+								grew = true;
+							}
+						}
+					}
+				}
+				if (len > 0) {
+					for (int t = 0; t < g.sym_count; ++t) {
+						if (g.syms[t].terminal && g.syms[t].nfa_accept >= 0 && (expected[t] || g.syms[t].ignored)
+						    && cur[g.syms[t].nfa_accept]) {
+							accept_len[t] = len;
+						}
+					}
+				}
+				if (pos + static_cast<size_t>(len) >= in.size()) { break; }
+				const int c = static_cast<unsigned char>(in[pos + static_cast<size_t>(len)]);
+				bool any = false;
+				for (int s = 0; s < g.state_count; ++s) { nxt[s] = false; }
+				for (int s = 0; s < g.state_count; ++s) {
+					if (!cur[s]) { continue; }
+					for (int e = g.state_first_edge[s]; e >= 0; e = g.edges[e].next) {
+						if (!g.edges[e].eps && g.edges[e].mask.get(c)) {
+							nxt[g.edges[e].to] = true;
+							any = true;
+						}
+					}
+				}
+				if (!any) {
+					alive = false;
+				} else {
+					for (int s = 0; s < g.state_count; ++s) { cur[s] = nxt[s]; }
+					++len;
+				}
+			}
+			// longest, then priority, then literal over pattern, then
+			// definition order; expected beats ignored-only on a tie
+			int best = -1;
+			for (int t = 0; t < g.sym_count; ++t) {
+				if (accept_len[t] <= 0) { continue; }
+				if (best < 0) {
+					best = t;
+					continue;
+				}
+				if (accept_len[t] != accept_len[best]) {
+					if (accept_len[t] > accept_len[best]) { best = t; }
+					continue;
+				}
+				if (expected[t] != expected[best]) {
+					if (expected[t]) { best = t; }
+					continue;
+				}
+				if (g.syms[t].prio != g.syms[best].prio) {
+					if (g.syms[t].prio > g.syms[best].prio) { best = t; }
+					continue;
+				}
+				const bool t_lit = g.syms[t].keyword;
+				const bool b_lit = g.syms[best].keyword;
+				if (t_lit != b_lit) {
+					if (t_lit) { best = t; }
+					continue;
+				}
+			}
+			if (best < 0) {
+				if constexpr (Tracer::enabled) { tr->event("lex: no terminal matches (offset)", {}, static_cast<long>(pos)); }
+				r.err = perr::lex;
+				r.err_pos = static_cast<int>(pos);
+				r.record_expected(expected, g.sym_count);
+				return r;
+			}
+			if (expected[best]) {
+				winner = best;
+				break;
+			}
+			// ignored: skip and lex again in the same set
+			if constexpr (Tracer::enabled) {
+				tr->event("lex: skip ignored (offset, length)", g.name_of(best), static_cast<long>(pos), accept_len[best]);
+			}
+			pos += static_cast<size_t>(accept_len[best]);
+		}
+
+		if (winner < 0) {
+			// input exhausted (possibly after trailing ignored tokens)
+			if (pos >= in.size() && accepted(g, start_sym, ch, i)) {
+				if constexpr (Tracer::enabled) { tr->event("earley: accepted (tokens)", {}, i); }
+				r.ok = true;
+				r.count = i;
+				return r;
+			}
+			if constexpr (Tracer::enabled) { tr->event("earley: rejected at end of tokens (offset)", {}, static_cast<long>(pos)); }
+			r.err = perr::parse;
+			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
+			return r;
+		}
+
+		// scan: advance every item expecting the winner into set i+1
+		if (r.count > static_cast<int>(M)) {
+			r.err = perr::overflow;
+			r.err_pos = static_cast<int>(pos);
+			return r;
+		}
+		if constexpr (Tracer::enabled) {
+			tr->event("lex: token (offset, length)", g.name_of(winner), static_cast<long>(pos), accept_len[winner]);
+		}
+		r.toks[r.count++] = lex_token{winner, static_cast<int>(pos), accept_len[winner]};
+		const int set_start = ch.set_off[i];
+		const int set_end = ch.set_off[i + 1];
+		for (int ix = set_start; ix < set_end; ++ix) {
+			const eitem it = ch.items[ix];
+			const cprod & pr = g.prods[it.prod];
+			if (it.dot < pr.rhs_len && g.rhs_pool[pr.rhs_off + it.dot] == winner) {
+				ch.push(set_end, it.prod, it.dot + 1, it.origin);
+			}
+		}
+		if (ch.item_count == set_end) {
+			// nothing advanced: cannot happen (the winner was expected)
+			r.err = perr::parse;
+			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
+			return r;
+		}
+		pos += static_cast<size_t>(accept_len[winner]);
+		++i;
+		if (i + 2 >= SetCap) {
+			r.err = perr::overflow;
+			return r;
+		}
+	}
+}
+
+// --- derivation extraction
+
+template <typename GT, typename RT, int ItemCap, int SetCap, typename Tracer = null_tracer> struct tree_builder {
+	const GT & g;
+	const chart<GT, ItemCap, SetCap> & ch;
+	const lex_token * toks;
+	int ntoks;
+	std::string_view input;
+	RT & out;
+	Tracer * tr = nullptr;
+	bool failed = false;
+	perr fail_kind = perr::none;
+	int fail_pos = -1; // byte offset of the failure, -1 when unknown
+
+	static constexpr int max_kids = 256;
+	static constexpr int max_depth = 256;
+
+	// the input offset where token index idx starts (input end past it)
+	constexpr int tok_off(int idx) const noexcept {
+		return idx < ntoks ? toks[idx].off : static_cast<int>(input.size());
+	}
+
+	constexpr void fail(perr k) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+		}
+	}
+	constexpr void fail(perr k, int pos) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+			fail_pos = pos;
+		}
+	}
+
+	constexpr bool completed(int prod, int origin, int end) const noexcept {
+		for (int i = ch.set_off[end]; i < ch.set_off[end + 1]; ++i) {
+			if (ch.items[i].prod == prod && ch.items[i].origin == origin
+			    && ch.items[i].dot == g.prods[prod].rhs_len) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	constexpr bool derivable(int sym, int s, int e) const noexcept {
+		for (int p = 0; p < g.prod_count; ++p) {
+			if (g.prods[p].lhs == sym && completed(p, s, e)) { return true; }
+		}
+		return false;
+	}
+
+	// find split points for prod p over token span [s, e): splits[i] is
+	// where rhs symbol i starts; splits[rhs_len] == e
+	constexpr bool find_splits(int p, int s, int e, int * splits, int i, int pos, int depth) noexcept {
+		if (depth > max_depth) {
+			fail(perr::depth, tok_off(pos));
+			return false;
+		}
+		const cprod & pr = g.prods[p];
+		splits[i] = pos;
+		if (i == pr.rhs_len) { return pos == e; }
+		const int sym = g.rhs_pool[pr.rhs_off + i];
+		if (g.syms[sym].terminal) {
+			if (pos < e && toks[pos].sym == sym) {
+				return find_splits(p, s, e, splits, i + 1, pos + 1, depth + 1);
+			}
+			return false;
+		}
+		// nonterminal: try candidate ends, longest first
+		for (int q = e; q >= pos; --q) {
+			if (!derivable(sym, pos, q)) { continue; }
+			if (find_splits(p, s, e, splits, i + 1, q, depth + 1)) { return true; }
+		}
+		return false;
+	}
+
+	constexpr int add_node(rnode n) noexcept {
+		if (out.node_count >= RT::node_cap) {
+			fail(perr::overflow);
+			return -1;
+		}
+		out.nodes[out.node_count] = n;
+		return out.node_count++;
+	}
+
+	constexpr int commit_children(const int * kids, int count) noexcept {
+		if (out.child_count + count > RT::child_cap) {
+			fail(perr::overflow);
+			return -1;
+		}
+		const int off = out.child_count;
+		for (int i = 0; i < count; ++i) { out.children[out.child_count++] = kids[i]; }
+		return off;
+	}
+
+	// derive nonterminal sym over [s, e), appending 0..n node ids into
+	// kids (splicing flattens here); keep_all propagates ! through
+	// helpers
+	constexpr void derive(int sym, int s, int e, bool keep_all, int * kids, int & nkids, int depth) noexcept {
+		if (failed) { return; }
+		if (depth > max_depth) {
+			fail(perr::depth, tok_off(s));
+			return;
+		}
+		// first completed production, in definition order
+		int splits[static_cast<size_t>(GT::lim::max_rhs_len) + 1]{};
+		int chosen = -1;
+		for (int p = 0; p < g.prod_count && chosen < 0; ++p) {
+			if (g.prods[p].lhs != sym) { continue; }
+			if (!completed(p, s, e)) { continue; }
+			if (find_splits(p, s, e, splits, 0, s, depth)) { chosen = p; }
+			if (failed) { return; }
+		}
+		if (chosen < 0) {
+			if constexpr (Tracer::enabled) { tr->event("derive: no completed production (tokens)", g.name_of(sym), s, e); }
+			fail(perr::parse, tok_off(s));
+			return;
+		}
+		if constexpr (Tracer::enabled) { tr->event("derive: production chosen (rule, tokens)", g.name_of(sym), chosen, e - s); }
+		CTLARK_CONSTEXPR_ASSERT(splits[g.prods[chosen].rhs_len] == e, "ctlark internal: derivation splits do not cover the span");
+		const cprod & pr = g.prods[chosen];
+		const csym & sm = g.syms[sym];
+		const bool splice = sm.splice || sm.inlined;
+		const bool own_keep = sm.splice ? keep_all : sm.bang;
+
+		int local[max_kids]{};
+		int nlocal = 0;
+		int * dst = splice ? kids : local;
+		int & ndst = splice ? nkids : nlocal;
+
+		for (int i = 0; i < pr.rhs_len && !failed; ++i) {
+			const int child_sym = g.rhs_pool[pr.rhs_off + i];
+			if (g.syms[child_sym].terminal) {
+				const lex_token & tk = toks[splits[i]];
+				if (!g.filtered(child_sym) || own_keep) {
+					if (ndst >= max_kids) {
+						fail(perr::overflow);
+						return;
+					}
+					const int id = add_node(rnode{true, g.syms[child_sym].name_off, g.syms[child_sym].name_len,
+					                              tk.off, tk.len, 0, 0});
+					if (id < 0) { return; }
+					dst[ndst++] = id;
+				}
+			} else {
+				derive(child_sym, splits[i], splits[i + 1], own_keep, dst, ndst, depth + 1);
+			}
+		}
+		if (failed || splice) { return; }
+
+		// ?rule with a single child collapses to that child, unless the
+		// chosen alternative is aliased (the alias forces a node)
+		if (sm.cond && nlocal == 1 && pr.alias_off < 0) {
+			if (nkids >= max_kids) {
+				fail(perr::overflow);
+				return;
+			}
+			kids[nkids++] = local[0];
+			return;
+		}
+		// tree node: aliased name if the production has one
+		int name_off = sm.name_off;
+		int name_len = sm.name_len;
+		if (pr.alias_off >= 0) {
+			name_off = pr.alias_off;
+			name_len = pr.alias_len;
+		}
+		const int coff = commit_children(local, nlocal);
+		if (coff < 0) { return; }
+		const int id = add_node(rnode{false, name_off, name_len, 0, 0, coff, nlocal});
+		if (id < 0) { return; }
+		if (nkids >= max_kids) {
+			fail(perr::overflow);
+			return;
+		}
+		kids[nkids++] = id;
+	}
+};
+
+// --- the whole pipeline
+
+template <const auto & G, const auto & In, int StartSym, typename Tracer = null_tracer>
+constexpr auto run_parse_traced(Tracer * tr = nullptr) noexcept {
+	constexpr size_t M = In.size();
+	using GT = std::remove_cv_t<std::remove_reference_t<decltype(G)>>;
+	parse_result<M> r{};
+
+	// the input is a ctll::fixed_string (char32_t units holding bytes)
+	char buf[M + 1]{};
+	for (size_t i = 0; i < M; ++i) { buf[i] = static_cast<char>(In[i]); }
+	const std::string_view in{buf, M};
+
+	if (!G.ok) {
+		r.err = perr::parse;
+		return r;
+	}
+
+	constexpr int item_cap = (dotted_positions(G) + 16) * (static_cast<int>(M) + 2) * 2;
+	constexpr int set_cap = static_cast<int>(M) + 3;
+	chart<GT, item_cap, set_cap> ch{};
+	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch, tr);
+	if (!pipe.ok) {
+		r.err = pipe.err;
+		r.err_pos = pipe.err_pos;
+		r.expected_count = pipe.expected_count;
+		r.expected_total = pipe.expected_total;
+		for (int k = 0; k < pipe.expected_count; ++k) { r.expected[k] = pipe.expected[k]; }
+		return r;
+	}
+
+	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap, Tracer>;
+	TB tb{G, ch, pipe.toks, pipe.count, in, r, tr};
+	int kids[TB::max_kids]{};
+	int nkids = 0;
+	tb.derive(StartSym, 0, pipe.count, false, kids, nkids, 0);
+	if (tb.failed) {
+		r.err = tb.fail_kind;
+		if (tb.fail_pos >= 0) { r.err_pos = tb.fail_pos; }
+		return r;
+	}
+	if (nkids == 1) {
+		r.root = kids[0];
+	} else {
+		// a spliced or empty start: wrap what remains under the start name
+		const int coff = tb.commit_children(kids, nkids);
+		if (tb.failed) {
+			r.err = tb.fail_kind;
+			return r;
+		}
+		r.root = tb.add_node(rnode{false, G.syms[StartSym].name_off, G.syms[StartSym].name_len, 0, 0, coff, nkids});
+		if (tb.failed) {
+			r.err = tb.fail_kind;
+			return r;
+		}
+	}
+	r.ok = true;
+	return r;
+}
+
+template <const auto & G, const auto & In, int StartSym>
+constexpr auto run_parse() noexcept {
+	return run_parse_traced<G, In, StartSym>();
 }
 
 } // namespace ctlark::detail
@@ -11895,6 +15491,9 @@ template <CTLARK_STRING_INPUT grammar_text> struct grammar_def {
 #endif
 	using parser_type = ctll::parser<lark_grammar, text, lark_actions>;
 	static constexpr bool text_ok = parser_type::template correct_with<context<>>;
+	// where the LL(1) grammar-text parse stopped (0 when it succeeded)
+	static constexpr size_t text_error_pos =
+		text_ok ? 0 : parser_type::template output<context<>>::position;
 
 	static constexpr auto make() noexcept {
 		if constexpr (text_ok) {
@@ -11959,20 +15558,142 @@ CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
                       CTLARK_STRING_INPUT start = default_start_rule>
 constexpr bool is_valid = detail::parse_def<grammar, input, start>::result.ok;
 
+// what went wrong, as a value: the error kind, byte offset, line,
+// column and the expected terminals (kind == error_kind::none when the
+// parse succeeded)
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr error_info_t error_info() noexcept {
+	return detail::error_info_of<detail::parse_def<grammar, input, start>>();
+}
+
+// the rendered diagnostic - location, source snippet with a caret, and
+// the expected terminals - as a static string ("" when the parse
+// succeeded):
+//
+//   ctlark: lexical error at line 1, column 7: no expected terminal matches
+//     [1, 2,]
+//           ^
+//   expected: SIGNED_NUMBER, ']', ESCAPED_STRING
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr std::string_view error_message() noexcept {
+	using pd = detail::parse_def<grammar, input, start>;
+	if constexpr (detail::classify<pd>() == error_kind::none) {
+		return std::string_view{};
+	} else {
+		return detail::message_storage<pd>::view;
+	}
+}
+
+// like error_info, for the grammar alone: bad_grammar_text failures
+// carry the line and column IN THE GRAMMAR TEXT where its parse stopped
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar> constexpr error_info_t grammar_error_info() noexcept {
+	using gd = detail::grammar_def<grammar>;
+	error_info_t e{};
+	if constexpr (!gd::text_ok) {
+		e.kind = error_kind::bad_grammar_text;
+		e.position = gd::text_error_pos;
+		const source_position at = locate(detail::grammar_text<gd>::view, e.position);
+		e.line = at.line;
+		e.column = at.column;
+	} else if constexpr (!gd::tables.ok) {
+		e.kind = error_kind::bad_grammar;
+	}
+	return e;
+}
+
+#ifdef CTLARK_VERBOSE_ERRORS
+namespace detail {
+
+// instantiated on a failed parse<>() so the compiler's backtrace shows
+// the error kind, line and column as template arguments
+template <error_kind Kind, size_t Line, size_t Column> struct parse_failed_at {
+	static_assert(Kind == error_kind::none,
+	              "ctlark: the parse failed - the error kind, line and column are the "
+	              "template arguments of parse_failed_at<...> in this diagnostic");
+	static constexpr bool instantiated = true;
+};
+
+#if CTLL_CNTTP_COMPILER_CHECK
+inline constexpr size_t verbose_headline_len = 72;
+
+// a char-array NTTP prints as a readable string literal in compiler
+// backtraces (a fixed_string would print as char32_t code points)
+struct diag_text {
+	char data[verbose_headline_len + 1]{};
+};
+
+// the first line of the rendered error
+template <typename PD> constexpr diag_text verbose_headline() noexcept {
+	diag_text t{};
+	const std::string_view m = message_storage<PD>::view;
+	for (size_t i = 0; i < m.size() && i < verbose_headline_len && m[i] != '\n'; ++i) { t.data[i] = m[i]; }
+	return t;
+}
+
+// the C++20 spelling also carries the headline text itself
+template <diag_text Msg, error_kind Kind, size_t Line, size_t Column> struct parse_failed {
+	static_assert(Kind == error_kind::none,
+	              "ctlark: the parse failed - the message, error kind, line and column are "
+	              "the template arguments of parse_failed<...> in this diagnostic");
+	static constexpr bool instantiated = true;
+};
+#endif
+
+} // namespace detail
+
+// instantiate the failure marker for a (grammar, input, start) so the
+// kind, line, column (and in C++20 the headline) appear in the
+// compiler's backtrace; a no-op when the parse succeeded. Format
+// layers built on ctlark call this from their own parse() gates.
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr bool verbose_report() noexcept {
+	using pd = detail::parse_def<grammar, input, start>;
+	if constexpr (detail::classify<pd>() != error_kind::none) {
+		constexpr error_info_t vei = error_info<grammar, input, start>();
+#if CTLL_CNTTP_COMPILER_CHECK
+		static_assert(detail::parse_failed<detail::verbose_headline<pd>(), vei.kind, vei.line, vei.column>::instantiated);
+#else
+		static_assert(detail::parse_failed_at<vei.kind, vei.line, vei.column>::instantiated);
+#endif
+	}
+	return true;
+}
+#endif
+
 // parse the input into a Tree/Token type; any failure is a compile
-// error with a static_assert naming the stage that failed
+// error with a static_assert naming the stage that failed and the
+// query to run for the details (define CTLARK_VERBOSE_ERRORS to also
+// get the kind, line and column embedded in the compiler's backtrace)
 CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
                       CTLARK_STRING_INPUT start = default_start_rule>
 constexpr auto parse() noexcept {
 	using pd = detail::parse_def<grammar, input, start>;
 	static_assert(pd::def::text_ok,
-	              "ctlark: the grammar text is not valid Lark (see the README for the supported subset)");
+	              "ctlark: the grammar text is not valid Lark - print "
+	              "ctlark::grammar_error_info<grammar>() for the line and column "
+	              "(see the README for the supported subset)");
 	static_assert(!pd::def::text_ok || pd::def::tables.ok,
-	              "ctlark: the grammar is not usable - print ctlark::grammar_error<...>() for the reason");
+	              "ctlark: the grammar is not usable - print ctlark::grammar_error<grammar>() for the reason");
 	static_assert(!pd::def::tables.ok || pd::start_sym >= 0,
 	              "ctlark: the start rule is not defined in the grammar");
-	static_assert(pd::start_sym < 0 || pd::result.ok,
-	              "ctlark: the input does not match the grammar");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::lex,
+	              "ctlark: lexical error - no expected terminal matches the input; print "
+	              "ctlark::error_message<grammar, input>() for the location and the expected terminals");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::parse,
+	              "ctlark: syntax error - the input does not match the grammar; print "
+	              "ctlark::error_message<grammar, input>() for the location and the expected terminals");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::overflow,
+	              "ctlark: an internal pool overflowed - the input is too large for the compiled "
+	              "limits (see the README section on constexpr budgets)");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::depth,
+	              "ctlark: the derivation recursion limit was hit (deeply nested input or "
+	              "cyclic nullable rules)");
+#ifdef CTLARK_VERBOSE_ERRORS
+	(void)verbose_report<grammar, input, start>();
+#endif
 	if constexpr (pd::result.ok) {
 		return typename detail::lift_node<pd::def::tables, pd::in, pd::result, pd::result.root>::type{};
 	} else {
@@ -11998,6 +15719,414 @@ CTLL_EXPORT template <CTLARK_STRING_INPUT grammar_text> struct lark {
 };
 
 } // namespace ctlark
+
+// the debugging toolbox builds on grammar_def/parse_def above
+#ifndef CTLARK__DEBUG__HPP
+#define CTLARK__DEBUG__HPP
+
+// Tools for debugging constexpr parses. Include order matters: this
+// header is included at the END of ctlark.hpp because it builds on the
+// grammar_def/parse_def machinery defined there.
+//
+//   debug::traced_parse<grammar, input>()  - rerun the parse with a
+//       recording trace log. It is a plain constexpr function, so the
+//       SAME call also runs at runtime: call it from main() to step
+//       through the parser under a debugger (or stream the trace live
+//       with CTLARK_DEBUG_STDERR) on exactly the input that fails at
+//       compile time.
+//   debug::parse_runtime<grammar>(text)    - parse a RUNTIME string
+//       against the compile-time tables; iterate on inputs without
+//       recompiling.
+//   debug::dump_tokens<grammar, input>()   - the lexed token stream as
+//       a static string (up to the first error, if any).
+//   debug::dump_grammar<grammar>()         - the lowered terminals and
+//       productions, i.e. what the Earley parser actually runs.
+//   CTLARK_CONSTEXPR_ASSERT (assert.hpp)   - internal invariants that
+//       stop constant evaluation with a readable message; enabled by
+//       defining CTLARK_DEBUG.
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <memory>
+#include <string_view>
+#include <vector>
+#ifdef CTLARK_DEBUG_STDERR
+#include <cstdio>
+#endif
+#endif
+
+namespace ctlark::debug {
+
+namespace detail {
+
+using namespace ctlark::detail;
+
+// runtime-vs-constexpr detection, usable from C++17
+constexpr bool constant_evaluated() noexcept {
+#if defined(__cpp_lib_is_constant_evaluated)
+	return std::is_constant_evaluated();
+#elif defined(__GNUC__) || defined(__clang__)
+	return __builtin_is_constant_evaluated();
+#elif defined(_MSC_VER) && _MSC_VER >= 1925
+	return __builtin_is_constant_evaluated();
+#else
+	return true; // unknown: assume constexpr, never attempt runtime I/O
+#endif
+}
+
+constexpr error_kind kind_from_perr(perr e) noexcept {
+	switch (e) {
+		case perr::lex: return error_kind::lex;
+		case perr::overflow: return error_kind::overflow;
+		case perr::depth: return error_kind::depth;
+		case perr::parse: return error_kind::parse;
+		case perr::none: return error_kind::none;
+	}
+	return error_kind::parse;
+}
+
+// error_info_t built from a finished parse_result (shared by the
+// traced and runtime paths; unlike error_info<>() this also works on
+// results computed at runtime)
+template <typename GT, typename PR>
+constexpr error_info_t info_from_result(const GT & g, const PR & pr, std::string_view in) noexcept {
+	error_info_t e{};
+	if (pr.ok) { return e; }
+	e.kind = kind_from_perr(pr.err);
+	e.position = static_cast<size_t>(pr.err_pos);
+	const source_position at = locate(in, e.position);
+	e.line = at.line;
+	e.column = at.column;
+	e.expected_count = pr.expected_count;
+	e.expected_total = pr.expected_total;
+	for (int i = 0; i < pr.expected_count; ++i) { e.expected[i] = term_display(g, pr.expected[i]); }
+	return e;
+}
+
+} // namespace detail
+
+// --- the trace log: a flat text of one line per parser event
+
+CTLL_EXPORT template <size_t Cap = 4096> struct trace_log {
+	static constexpr bool enabled = true;
+	static constexpr long no_value = -1;
+
+	char buf[Cap]{};
+	size_t len = 0;
+	int events = 0;
+	bool truncated = false;
+
+	constexpr void put(std::string_view s) noexcept {
+		for (const char c : s) {
+			if (len + 1 < Cap) {
+				buf[len++] = c;
+			} else {
+				truncated = true;
+			}
+		}
+	}
+	constexpr void put_num(long v) noexcept {
+		if (v < 0) {
+			put("-");
+			v = -v;
+		}
+		char d[20]{};
+		size_t n = 0;
+		do {
+			d[n++] = static_cast<char>('0' + v % 10);
+			v /= 10;
+		} while (v > 0);
+		while (n > 0) { put(std::string_view{&d[--n], 1}); }
+	}
+	constexpr void event(std::string_view stage, std::string_view what = {},
+	                     long a = no_value, long b = no_value) noexcept {
+		++events;
+		const size_t start = len;
+		put(stage);
+		if (!what.empty()) {
+			put(" ");
+			put(what);
+		}
+		if (a != no_value) {
+			put(" ");
+			put_num(a);
+		}
+		if (b != no_value) {
+			put(" ");
+			put_num(b);
+		}
+		put("\n");
+#ifdef CTLARK_DEBUG_STDERR
+		if (!detail::constant_evaluated()) { std::fwrite(buf + start, 1, len - start, stderr); }
+#else
+		(void)start;
+#endif
+	}
+	constexpr std::string_view view() const noexcept {
+		return std::string_view{buf, len};
+	}
+};
+
+// --- traced_parse: the parse, narrated
+
+CTLL_EXPORT template <size_t Cap> struct traced_result {
+	bool ok = false;
+	error_info_t error{};
+	trace_log<Cap> log{};
+};
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule, size_t Cap = 4096>
+constexpr traced_result<Cap> traced_parse() noexcept {
+	using pd = ctlark::detail::parse_def<grammar, input, start>;
+	traced_result<Cap> r{};
+	if constexpr (!pd::def::text_ok) {
+		r.error.kind = error_kind::bad_grammar_text;
+		r.log.event("grammar: the grammar text is not valid Lark");
+	} else if constexpr (!pd::def::tables.ok) {
+		r.error.kind = error_kind::bad_grammar;
+		r.log.event("grammar: not usable:", ctlark::grammar_error<grammar>());
+	} else if constexpr (pd::start_sym < 0) {
+		r.error.kind = error_kind::no_start_rule;
+		r.log.event("grammar: the start rule is not defined");
+	} else {
+		const auto pr = ctlark::detail::run_parse_traced<pd::def::tables, pd::in, pd::start_sym>(&r.log);
+		r.ok = pr.ok;
+		if (!pr.ok) {
+			// rebuild the input characters locally so this path also
+			// works when the whole call runs at runtime
+			char buf[pd::in.size() + 1]{};
+			for (size_t i = 0; i < pd::in.size(); ++i) { buf[i] = static_cast<char>(pd::in[i]); }
+			r.error = detail::info_from_result(pd::def::tables, pr, std::string_view{buf, pd::in.size()});
+			// the string_views in error.expected point into the static
+			// grammar tables, never into buf, so returning them is fine
+		}
+	}
+	return r;
+}
+
+// --- parse_runtime: runtime input, compile-time grammar
+//
+// Recognition only (lexing + Earley); the tree-shaping stage that
+// parse<>() adds cannot fail on a recognized input except by depth.
+// MaxTokens bounds the token stream; inputs longer than that report
+// overflow. The chart lives on the heap - this is not constexpr, on
+// purpose.
+
+CTLL_EXPORT struct runtime_token {
+	std::string_view name;  // terminal name in the grammar tables
+	std::string_view value; // the matched span of the input
+	size_t offset = 0;
+};
+
+CTLL_EXPORT struct runtime_result {
+	bool ok = false;
+	error_info_t error{};
+	std::vector<runtime_token> tokens{};
+};
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, size_t MaxTokens = 1024>
+runtime_result parse_runtime(std::string_view in, std::string_view start_rule = "start") {
+	using gd = ctlark::detail::grammar_def<grammar>;
+	runtime_result r{};
+	if constexpr (!gd::text_ok) {
+		r.error.kind = error_kind::bad_grammar_text;
+		return r;
+	} else if constexpr (!gd::tables.ok) {
+		r.error.kind = error_kind::bad_grammar;
+		return r;
+	} else {
+		static constexpr auto & g = gd::tables;
+		using GT = std::remove_cv_t<std::remove_reference_t<decltype(g)>>;
+		const int start_sym = g.find_rule(start_rule);
+		if (start_sym < 0) {
+			r.error.kind = error_kind::no_start_rule;
+			return r;
+		}
+		if (in.size() > MaxTokens) {
+			r.error.kind = error_kind::overflow;
+			return r;
+		}
+		constexpr int item_cap =
+			(ctlark::detail::dotted_positions(g) + 16) * (static_cast<int>(MaxTokens) + 2) * 2;
+		constexpr int set_cap = static_cast<int>(MaxTokens) + 3;
+		const auto ch = std::make_unique<ctlark::detail::chart<GT, item_cap, set_cap>>();
+		const auto pipe = std::make_unique<ctlark::detail::pipeline_result<GT, MaxTokens>>(
+			ctlark::detail::run_pipeline<GT, MaxTokens>(g, start_sym, in, *ch));
+		r.ok = pipe->ok;
+		if (!pipe->ok) { r.error = detail::info_from_result(g, *pipe, in); }
+		const int ntoks = pipe->ok ? pipe->count : 0;
+		r.tokens.reserve(static_cast<size_t>(ntoks));
+		for (int i = 0; i < ntoks; ++i) {
+			const auto & tk = pipe->toks[i];
+			r.tokens.push_back(runtime_token{g.name_of(tk.sym),
+			                                 in.substr(static_cast<size_t>(tk.off), static_cast<size_t>(tk.len)),
+			                                 static_cast<size_t>(tk.off)});
+		}
+		return r;
+	}
+}
+
+// --- dump_tokens: the lexed token stream as a static string
+
+namespace detail {
+
+// lex the input without extracting a tree (its own instantiation, so
+// asking for a token dump does not disturb the cached parse)
+template <typename PD> struct lex_def {
+	static constexpr auto & g = PD::def::tables;
+	using GT = std::remove_cv_t<std::remove_reference_t<decltype(g)>>;
+	static constexpr size_t M = PD::in.size();
+
+	static constexpr auto make() noexcept {
+		char buf[M + 1]{};
+		for (size_t i = 0; i < M; ++i) { buf[i] = static_cast<char>(PD::in[i]); }
+		constexpr int item_cap = (dotted_positions(g) + 16) * (static_cast<int>(M) + 2) * 2;
+		constexpr int set_cap = static_cast<int>(M) + 3;
+		chart<GT, item_cap, set_cap> ch{};
+		return run_pipeline<GT, M>(g, PD::start_sym, std::string_view{buf, M}, ch);
+	}
+	static constexpr auto pipe = make();
+};
+
+template <typename PD> struct tokens_storage {
+	template <typename Sink> static constexpr void render(Sink & s) noexcept {
+		const auto & pipe = lex_def<PD>::pipe;
+		const std::string_view in = input_text<PD>::view;
+		const int n = pipe.ok ? pipe.count : lexed_count();
+		for (int i = 0; i < n; ++i) {
+			const auto & tk = pipe.toks[i];
+			s.put(lex_def<PD>::g.name_of(tk.sym));
+			s.put(" '");
+			s.put_escaped(in.substr(static_cast<size_t>(tk.off), static_cast<size_t>(tk.len)));
+			s.put("' @");
+			put_uint(s, static_cast<size_t>(tk.off));
+			s.put("..");
+			put_uint(s, static_cast<size_t>(tk.off + tk.len));
+			s.put("\n");
+		}
+		if (!pipe.ok) {
+			s.put("! ");
+			s.put(to_string(kind_from_perr(pipe.err)));
+			s.put(" at offset ");
+			put_uint(s, static_cast<size_t>(pipe.err_pos));
+			s.put("\n");
+		}
+	}
+	// on failure pipe.count was left mid-stream; it is still the number
+	// of tokens lexed so far
+	static constexpr int lexed_count() noexcept {
+		return lex_def<PD>::pipe.count;
+	}
+
+	static constexpr size_t measure() noexcept {
+		count_sink s{};
+		render(s);
+		return s.at;
+	}
+	static constexpr size_t length = measure();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		render(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr std::string_view dump_tokens() noexcept {
+	using pd = ctlark::detail::parse_def<grammar, input, start>;
+	if constexpr (!pd::def::text_ok || !pd::def::tables.ok) {
+		return ctlark::grammar_error<grammar>();
+	} else if constexpr (pd::start_sym < 0) {
+		return "ctlark: the start rule is not defined in the grammar";
+	} else {
+		return detail::tokens_storage<pd>::view;
+	}
+}
+
+// --- dump_grammar: the lowered terminals and productions
+
+namespace detail {
+
+template <typename GD> struct grammar_storage {
+	template <typename Sink> static constexpr void render(Sink & s) noexcept {
+		const auto & g = GD::tables;
+		for (int t = 0; t < g.sym_count; ++t) {
+			if (!g.syms[t].terminal) { continue; }
+			s.put("terminal ");
+			s.put(g.name_of(t));
+			if (term_is_literal(g, t)) {
+				s.put(" '");
+				s.put_escaped(g.pool_view(g.syms[t].lit_off, g.syms[t].lit_len));
+				s.put("'");
+			}
+			if (g.syms[t].prio != 0) {
+				s.put(" .");
+				const int prio = g.syms[t].prio;
+				if (prio < 0) { s.put("-"); }
+				put_uint(s, static_cast<size_t>(prio < 0 ? -prio : prio));
+			}
+			if (g.syms[t].ignored) { s.put(" %ignore"); }
+			s.put("\n");
+		}
+		for (int p = 0; p < g.prod_count; ++p) {
+			const auto & pr = g.prods[p];
+			s.put(g.name_of(pr.lhs));
+			s.put(":");
+			for (int i = 0; i < pr.rhs_len; ++i) {
+				s.put(" ");
+				s.put(g.name_of(g.rhs_pool[pr.rhs_off + i]));
+			}
+			if (pr.alias_off >= 0) {
+				s.put(" -> ");
+				s.put(g.pool_view(pr.alias_off, pr.alias_len));
+			}
+			s.put("\n");
+		}
+	}
+
+	static constexpr size_t measure() noexcept {
+		count_sink s{};
+		render(s);
+		return s.at;
+	}
+	static constexpr size_t length = measure();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		render(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar> constexpr std::string_view dump_grammar() noexcept {
+	using gd = ctlark::detail::grammar_def<grammar>;
+	if constexpr (!gd::text_ok || !gd::tables.ok) {
+		return ctlark::grammar_error<grammar>();
+	} else {
+		return detail::grammar_storage<gd>::view;
+	}
+}
+
+} // namespace ctlark::debug
+
+#endif
 
 #endif
 
@@ -16687,6 +20816,45 @@ template <typename... Items> struct grammar {
 
 #endif
 
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
+
+#endif
+
 #ifndef CTLARK__COMMON__HPP
 #define CTLARK__COMMON__HPP
 
@@ -17304,7 +21472,7 @@ template <size_t N> struct grammar_tables {
 	using lim = climits<N>;
 
 	bool ok = true;
-	char error[96]{};
+	char error[128]{};
 
 	cnode nodes[static_cast<size_t>(lim::nodes)]{};
 	int node_count = 0;
@@ -17342,6 +21510,20 @@ template <size_t N> struct grammar_tables {
 		ok = false;
 		size_t i = 0;
 		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
 		error[i] = '\0';
 	}
 	constexpr std::string_view error_view() const noexcept {
@@ -17423,7 +21605,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
 		const int s = intern(name, false);
-		if (syms[s].defined) { fail("ctlark: duplicate rule definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
 		syms[s].defined = true;
 		syms[s].bang = bang;
 		syms[s].cond = cond;
@@ -17432,7 +21614,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_term(std::string_view name, int prio) noexcept {
 		const int s = intern(name, true);
-		if (syms[s].defined) { fail("ctlark: duplicate terminal definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
 		syms[s].defined = true;
 		syms[s].prio = prio;
 		return s;
@@ -17479,12 +21661,12 @@ template <size_t N> struct grammar_tables {
 		}
 		const int root = emit_common(segs[1], *this);
 		if (root < 0) {
-			fail("ctlark: %import: not a supported common.* terminal");
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
 			return;
 		}
 		const int s = intern(alias, true);
 		if (syms[s].defined) {
-			fail("ctlark: duplicate terminal definition (%import)");
+			fail("ctlark: duplicate terminal definition (%import)", alias);
 			return;
 		}
 		syms[s].defined = true;
@@ -17977,7 +22159,7 @@ template <size_t N> struct grammar_tables {
 			case pk::tref: {
 				const int t = n.a;
 				if (syms[t].pattern < 0) {
-					fail("ctlark: reference to an undefined terminal");
+					fail("ctlark: reference to an undefined terminal", name_of(t));
 					return nfa_frag{0, 0};
 				}
 				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
@@ -18002,9 +22184,9 @@ template <size_t N> struct grammar_tables {
 	constexpr void validate() noexcept {
 		for (int i = 0; i < sym_count && ok; ++i) {
 			if (syms[i].terminal) {
-				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal"); }
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
 			} else {
-				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule"); }
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
 			}
 		}
 	}
@@ -18403,6 +22585,45 @@ template <typename... Items> struct grammar {
 
 #endif
 
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
+
+#endif
+
 #ifndef CTLARK__COMMON__HPP
 #define CTLARK__COMMON__HPP
 
@@ -19020,7 +23241,7 @@ template <size_t N> struct grammar_tables {
 	using lim = climits<N>;
 
 	bool ok = true;
-	char error[96]{};
+	char error[128]{};
 
 	cnode nodes[static_cast<size_t>(lim::nodes)]{};
 	int node_count = 0;
@@ -19058,6 +23279,20 @@ template <size_t N> struct grammar_tables {
 		ok = false;
 		size_t i = 0;
 		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
 		error[i] = '\0';
 	}
 	constexpr std::string_view error_view() const noexcept {
@@ -19139,7 +23374,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
 		const int s = intern(name, false);
-		if (syms[s].defined) { fail("ctlark: duplicate rule definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
 		syms[s].defined = true;
 		syms[s].bang = bang;
 		syms[s].cond = cond;
@@ -19148,7 +23383,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_term(std::string_view name, int prio) noexcept {
 		const int s = intern(name, true);
-		if (syms[s].defined) { fail("ctlark: duplicate terminal definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
 		syms[s].defined = true;
 		syms[s].prio = prio;
 		return s;
@@ -19195,12 +23430,12 @@ template <size_t N> struct grammar_tables {
 		}
 		const int root = emit_common(segs[1], *this);
 		if (root < 0) {
-			fail("ctlark: %import: not a supported common.* terminal");
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
 			return;
 		}
 		const int s = intern(alias, true);
 		if (syms[s].defined) {
-			fail("ctlark: duplicate terminal definition (%import)");
+			fail("ctlark: duplicate terminal definition (%import)", alias);
 			return;
 		}
 		syms[s].defined = true;
@@ -19693,7 +23928,7 @@ template <size_t N> struct grammar_tables {
 			case pk::tref: {
 				const int t = n.a;
 				if (syms[t].pattern < 0) {
-					fail("ctlark: reference to an undefined terminal");
+					fail("ctlark: reference to an undefined terminal", name_of(t));
 					return nfa_frag{0, 0};
 				}
 				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
@@ -19718,9 +23953,9 @@ template <size_t N> struct grammar_tables {
 	constexpr void validate() noexcept {
 		for (int i = 0; i < sym_count && ok; ++i) {
 			if (syms[i].terminal) {
-				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal"); }
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
 			} else {
-				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule"); }
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
 			}
 		}
 	}
@@ -19842,6 +24077,10 @@ struct rnode {
 	int child_count;
 };
 
+// how many expected terminals a failure records (the true count is
+// kept separately so a diagnostic can say "... and N more")
+inline constexpr int expected_cap = 12;
+
 template <size_t M> struct parse_result {
 	static constexpr int node_cap = static_cast<int>(8 * (M + 2) + 128);
 	static constexpr int child_cap = static_cast<int>(8 * (M + 2) + 128);
@@ -19849,6 +24088,9 @@ template <size_t M> struct parse_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
 
 	rnode nodes[static_cast<size_t>(node_cap)]{};
 	int node_count = 0;
@@ -19909,6 +24151,18 @@ template <typename GT, size_t M> struct pipeline_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	// keep the terminals some Earley item expected at the failure point
+	constexpr void record_expected(const bool * exp, int sym_count) noexcept {
+		for (int t = 0; t < sym_count; ++t) {
+			if (!exp[t]) { continue; }
+			if (expected_count < expected_cap) { expected[expected_count++] = t; }
+			++expected_total;
+		}
+	}
 };
 
 // close set i: run predictions and completions to a fixpoint
@@ -19955,11 +24209,18 @@ constexpr bool accepted(const GT & g, int start_sym, const chart<GT, ItemCap, Se
 	return false;
 }
 
+// a tracer that traces nothing: every trace call is guarded by
+// `if constexpr (Tracer::enabled)`, so the disabled form costs zero
+// constexpr steps (debug.hpp provides the recording trace_log)
+struct null_tracer {
+	static constexpr bool enabled = false;
+};
+
 // the interleaved pipeline: close a set, lex among expected terminals,
 // scan, repeat
-template <typename GT, size_t M, int ItemCap, int SetCap>
+template <typename GT, size_t M, int ItemCap, int SetCap, typename Tracer = null_tracer>
 constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::string_view in,
-                                              chart<GT, ItemCap, SetCap> & ch) noexcept {
+                                              chart<GT, ItemCap, SetCap> & ch, Tracer * tr = nullptr) noexcept {
 	pipeline_result<GT, M> r{};
 	bool expected[static_cast<size_t>(GT::lim::syms)]{};
 	bool cur[static_cast<size_t>(GT::lim::states)]{};
@@ -19977,7 +24238,11 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 		close_set(g, ch, i);
 		ch.set_off[i + 1] = ch.item_count;
 		ch.set_count = i + 2;
+		if constexpr (Tracer::enabled) {
+			tr->event("earley: set closed (set, items)", {}, i, ch.set_off[i + 1] - ch.set_off[i]);
+		}
 		if (ch.overflow) {
+			if constexpr (Tracer::enabled) { tr->event("earley: chart overflow", {}, i); }
 			r.err = perr::overflow;
 			return r;
 		}
@@ -20076,8 +24341,10 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				}
 			}
 			if (best < 0) {
+				if constexpr (Tracer::enabled) { tr->event("lex: no terminal matches (offset)", {}, static_cast<long>(pos)); }
 				r.err = perr::lex;
 				r.err_pos = static_cast<int>(pos);
+				r.record_expected(expected, g.sym_count);
 				return r;
 			}
 			if (expected[best]) {
@@ -20085,18 +24352,24 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				break;
 			}
 			// ignored: skip and lex again in the same set
+			if constexpr (Tracer::enabled) {
+				tr->event("lex: skip ignored (offset, length)", g.name_of(best), static_cast<long>(pos), accept_len[best]);
+			}
 			pos += static_cast<size_t>(accept_len[best]);
 		}
 
 		if (winner < 0) {
 			// input exhausted (possibly after trailing ignored tokens)
 			if (pos >= in.size() && accepted(g, start_sym, ch, i)) {
+				if constexpr (Tracer::enabled) { tr->event("earley: accepted (tokens)", {}, i); }
 				r.ok = true;
 				r.count = i;
 				return r;
 			}
+			if constexpr (Tracer::enabled) { tr->event("earley: rejected at end of tokens (offset)", {}, static_cast<long>(pos)); }
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 
@@ -20105,6 +24378,9 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			r.err = perr::overflow;
 			r.err_pos = static_cast<int>(pos);
 			return r;
+		}
+		if constexpr (Tracer::enabled) {
+			tr->event("lex: token (offset, length)", g.name_of(winner), static_cast<long>(pos), accept_len[winner]);
 		}
 		r.toks[r.count++] = lex_token{winner, static_cast<int>(pos), accept_len[winner]};
 		const int set_start = ch.set_off[i];
@@ -20120,6 +24396,7 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			// nothing advanced: cannot happen (the winner was expected)
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 		pos += static_cast<size_t>(accept_len[winner]);
@@ -20133,23 +24410,37 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 
 // --- derivation extraction
 
-template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder {
+template <typename GT, typename RT, int ItemCap, int SetCap, typename Tracer = null_tracer> struct tree_builder {
 	const GT & g;
 	const chart<GT, ItemCap, SetCap> & ch;
 	const lex_token * toks;
 	int ntoks;
 	std::string_view input;
 	RT & out;
+	Tracer * tr = nullptr;
 	bool failed = false;
 	perr fail_kind = perr::none;
+	int fail_pos = -1; // byte offset of the failure, -1 when unknown
 
 	static constexpr int max_kids = 256;
 	static constexpr int max_depth = 256;
+
+	// the input offset where token index idx starts (input end past it)
+	constexpr int tok_off(int idx) const noexcept {
+		return idx < ntoks ? toks[idx].off : static_cast<int>(input.size());
+	}
 
 	constexpr void fail(perr k) noexcept {
 		if (!failed) {
 			failed = true;
 			fail_kind = k;
+		}
+	}
+	constexpr void fail(perr k, int pos) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+			fail_pos = pos;
 		}
 	}
 
@@ -20174,7 +24465,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	// where rhs symbol i starts; splits[rhs_len] == e
 	constexpr bool find_splits(int p, int s, int e, int * splits, int i, int pos, int depth) noexcept {
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(pos));
 			return false;
 		}
 		const cprod & pr = g.prods[p];
@@ -20220,7 +24511,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	constexpr void derive(int sym, int s, int e, bool keep_all, int * kids, int & nkids, int depth) noexcept {
 		if (failed) { return; }
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(s));
 			return;
 		}
 		// first completed production, in definition order
@@ -20233,9 +24524,12 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 			if (failed) { return; }
 		}
 		if (chosen < 0) {
-			fail(perr::parse);
+			if constexpr (Tracer::enabled) { tr->event("derive: no completed production (tokens)", g.name_of(sym), s, e); }
+			fail(perr::parse, tok_off(s));
 			return;
 		}
+		if constexpr (Tracer::enabled) { tr->event("derive: production chosen (rule, tokens)", g.name_of(sym), chosen, e - s); }
+		CTLARK_CONSTEXPR_ASSERT(splits[g.prods[chosen].rhs_len] == e, "ctlark internal: derivation splits do not cover the span");
 		const cprod & pr = g.prods[chosen];
 		const csym & sm = g.syms[sym];
 		const bool splice = sm.splice || sm.inlined;
@@ -20297,8 +24591,8 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 
 // --- the whole pipeline
 
-template <const auto & G, const auto & In, int StartSym>
-constexpr auto run_parse() noexcept {
+template <const auto & G, const auto & In, int StartSym, typename Tracer = null_tracer>
+constexpr auto run_parse_traced(Tracer * tr = nullptr) noexcept {
 	constexpr size_t M = In.size();
 	using GT = std::remove_cv_t<std::remove_reference_t<decltype(G)>>;
 	parse_result<M> r{};
@@ -20316,20 +24610,24 @@ constexpr auto run_parse() noexcept {
 	constexpr int item_cap = (dotted_positions(G) + 16) * (static_cast<int>(M) + 2) * 2;
 	constexpr int set_cap = static_cast<int>(M) + 3;
 	chart<GT, item_cap, set_cap> ch{};
-	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch);
+	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch, tr);
 	if (!pipe.ok) {
 		r.err = pipe.err;
 		r.err_pos = pipe.err_pos;
+		r.expected_count = pipe.expected_count;
+		r.expected_total = pipe.expected_total;
+		for (int k = 0; k < pipe.expected_count; ++k) { r.expected[k] = pipe.expected[k]; }
 		return r;
 	}
 
-	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap>;
-	TB tb{G, ch, pipe.toks, pipe.count, in, r};
+	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap, Tracer>;
+	TB tb{G, ch, pipe.toks, pipe.count, in, r, tr};
 	int kids[TB::max_kids]{};
 	int nkids = 0;
 	tb.derive(StartSym, 0, pipe.count, false, kids, nkids, 0);
 	if (tb.failed) {
 		r.err = tb.fail_kind;
+		if (tb.fail_pos >= 0) { r.err_pos = tb.fail_pos; }
 		return r;
 	}
 	if (nkids == 1) {
@@ -20349,6 +24647,11 @@ constexpr auto run_parse() noexcept {
 	}
 	r.ok = true;
 	return r;
+}
+
+template <const auto & G, const auto & In, int StartSym>
+constexpr auto run_parse() noexcept {
+	return run_parse_traced<G, In, StartSym>();
 }
 
 } // namespace ctlark::detail
@@ -20824,8 +25127,8 @@ constexpr void for_each_child(tree<Data, Children...>, F && f) {
 
 #endif
 
-#ifndef CTLARK__LIFT__HPP
-#define CTLARK__LIFT__HPP
+#ifndef CTLARK__DIAG__HPP
+#define CTLARK__DIAG__HPP
 
 #ifndef CTLARK__EARLEY__HPP
 #define CTLARK__EARLEY__HPP
@@ -21152,6 +25455,45 @@ template <typename... Items> struct grammar {
 };
 
 } // namespace ctlark::ast
+
+#endif
+
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
 
 #endif
 
@@ -21772,7 +26114,7 @@ template <size_t N> struct grammar_tables {
 	using lim = climits<N>;
 
 	bool ok = true;
-	char error[96]{};
+	char error[128]{};
 
 	cnode nodes[static_cast<size_t>(lim::nodes)]{};
 	int node_count = 0;
@@ -21810,6 +26152,20 @@ template <size_t N> struct grammar_tables {
 		ok = false;
 		size_t i = 0;
 		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
 		error[i] = '\0';
 	}
 	constexpr std::string_view error_view() const noexcept {
@@ -21891,7 +26247,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
 		const int s = intern(name, false);
-		if (syms[s].defined) { fail("ctlark: duplicate rule definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
 		syms[s].defined = true;
 		syms[s].bang = bang;
 		syms[s].cond = cond;
@@ -21900,7 +26256,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_term(std::string_view name, int prio) noexcept {
 		const int s = intern(name, true);
-		if (syms[s].defined) { fail("ctlark: duplicate terminal definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
 		syms[s].defined = true;
 		syms[s].prio = prio;
 		return s;
@@ -21947,12 +26303,12 @@ template <size_t N> struct grammar_tables {
 		}
 		const int root = emit_common(segs[1], *this);
 		if (root < 0) {
-			fail("ctlark: %import: not a supported common.* terminal");
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
 			return;
 		}
 		const int s = intern(alias, true);
 		if (syms[s].defined) {
-			fail("ctlark: duplicate terminal definition (%import)");
+			fail("ctlark: duplicate terminal definition (%import)", alias);
 			return;
 		}
 		syms[s].defined = true;
@@ -22445,7 +26801,7 @@ template <size_t N> struct grammar_tables {
 			case pk::tref: {
 				const int t = n.a;
 				if (syms[t].pattern < 0) {
-					fail("ctlark: reference to an undefined terminal");
+					fail("ctlark: reference to an undefined terminal", name_of(t));
 					return nfa_frag{0, 0};
 				}
 				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
@@ -22470,9 +26826,9 @@ template <size_t N> struct grammar_tables {
 	constexpr void validate() noexcept {
 		for (int i = 0; i < sym_count && ok; ++i) {
 			if (syms[i].terminal) {
-				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal"); }
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
 			} else {
-				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule"); }
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
 			}
 		}
 	}
@@ -22594,6 +26950,10 @@ struct rnode {
 	int child_count;
 };
 
+// how many expected terminals a failure records (the true count is
+// kept separately so a diagnostic can say "... and N more")
+inline constexpr int expected_cap = 12;
+
 template <size_t M> struct parse_result {
 	static constexpr int node_cap = static_cast<int>(8 * (M + 2) + 128);
 	static constexpr int child_cap = static_cast<int>(8 * (M + 2) + 128);
@@ -22601,6 +26961,9 @@ template <size_t M> struct parse_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
 
 	rnode nodes[static_cast<size_t>(node_cap)]{};
 	int node_count = 0;
@@ -22661,6 +27024,18 @@ template <typename GT, size_t M> struct pipeline_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	// keep the terminals some Earley item expected at the failure point
+	constexpr void record_expected(const bool * exp, int sym_count) noexcept {
+		for (int t = 0; t < sym_count; ++t) {
+			if (!exp[t]) { continue; }
+			if (expected_count < expected_cap) { expected[expected_count++] = t; }
+			++expected_total;
+		}
+	}
 };
 
 // close set i: run predictions and completions to a fixpoint
@@ -22707,11 +27082,18 @@ constexpr bool accepted(const GT & g, int start_sym, const chart<GT, ItemCap, Se
 	return false;
 }
 
+// a tracer that traces nothing: every trace call is guarded by
+// `if constexpr (Tracer::enabled)`, so the disabled form costs zero
+// constexpr steps (debug.hpp provides the recording trace_log)
+struct null_tracer {
+	static constexpr bool enabled = false;
+};
+
 // the interleaved pipeline: close a set, lex among expected terminals,
 // scan, repeat
-template <typename GT, size_t M, int ItemCap, int SetCap>
+template <typename GT, size_t M, int ItemCap, int SetCap, typename Tracer = null_tracer>
 constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::string_view in,
-                                              chart<GT, ItemCap, SetCap> & ch) noexcept {
+                                              chart<GT, ItemCap, SetCap> & ch, Tracer * tr = nullptr) noexcept {
 	pipeline_result<GT, M> r{};
 	bool expected[static_cast<size_t>(GT::lim::syms)]{};
 	bool cur[static_cast<size_t>(GT::lim::states)]{};
@@ -22729,7 +27111,11 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 		close_set(g, ch, i);
 		ch.set_off[i + 1] = ch.item_count;
 		ch.set_count = i + 2;
+		if constexpr (Tracer::enabled) {
+			tr->event("earley: set closed (set, items)", {}, i, ch.set_off[i + 1] - ch.set_off[i]);
+		}
 		if (ch.overflow) {
+			if constexpr (Tracer::enabled) { tr->event("earley: chart overflow", {}, i); }
 			r.err = perr::overflow;
 			return r;
 		}
@@ -22828,8 +27214,10 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				}
 			}
 			if (best < 0) {
+				if constexpr (Tracer::enabled) { tr->event("lex: no terminal matches (offset)", {}, static_cast<long>(pos)); }
 				r.err = perr::lex;
 				r.err_pos = static_cast<int>(pos);
+				r.record_expected(expected, g.sym_count);
 				return r;
 			}
 			if (expected[best]) {
@@ -22837,18 +27225,24 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				break;
 			}
 			// ignored: skip and lex again in the same set
+			if constexpr (Tracer::enabled) {
+				tr->event("lex: skip ignored (offset, length)", g.name_of(best), static_cast<long>(pos), accept_len[best]);
+			}
 			pos += static_cast<size_t>(accept_len[best]);
 		}
 
 		if (winner < 0) {
 			// input exhausted (possibly after trailing ignored tokens)
 			if (pos >= in.size() && accepted(g, start_sym, ch, i)) {
+				if constexpr (Tracer::enabled) { tr->event("earley: accepted (tokens)", {}, i); }
 				r.ok = true;
 				r.count = i;
 				return r;
 			}
+			if constexpr (Tracer::enabled) { tr->event("earley: rejected at end of tokens (offset)", {}, static_cast<long>(pos)); }
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 
@@ -22857,6 +27251,9 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			r.err = perr::overflow;
 			r.err_pos = static_cast<int>(pos);
 			return r;
+		}
+		if constexpr (Tracer::enabled) {
+			tr->event("lex: token (offset, length)", g.name_of(winner), static_cast<long>(pos), accept_len[winner]);
 		}
 		r.toks[r.count++] = lex_token{winner, static_cast<int>(pos), accept_len[winner]};
 		const int set_start = ch.set_off[i];
@@ -22872,6 +27269,7 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			// nothing advanced: cannot happen (the winner was expected)
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 		pos += static_cast<size_t>(accept_len[winner]);
@@ -22885,23 +27283,37 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 
 // --- derivation extraction
 
-template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder {
+template <typename GT, typename RT, int ItemCap, int SetCap, typename Tracer = null_tracer> struct tree_builder {
 	const GT & g;
 	const chart<GT, ItemCap, SetCap> & ch;
 	const lex_token * toks;
 	int ntoks;
 	std::string_view input;
 	RT & out;
+	Tracer * tr = nullptr;
 	bool failed = false;
 	perr fail_kind = perr::none;
+	int fail_pos = -1; // byte offset of the failure, -1 when unknown
 
 	static constexpr int max_kids = 256;
 	static constexpr int max_depth = 256;
+
+	// the input offset where token index idx starts (input end past it)
+	constexpr int tok_off(int idx) const noexcept {
+		return idx < ntoks ? toks[idx].off : static_cast<int>(input.size());
+	}
 
 	constexpr void fail(perr k) noexcept {
 		if (!failed) {
 			failed = true;
 			fail_kind = k;
+		}
+	}
+	constexpr void fail(perr k, int pos) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+			fail_pos = pos;
 		}
 	}
 
@@ -22926,7 +27338,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	// where rhs symbol i starts; splits[rhs_len] == e
 	constexpr bool find_splits(int p, int s, int e, int * splits, int i, int pos, int depth) noexcept {
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(pos));
 			return false;
 		}
 		const cprod & pr = g.prods[p];
@@ -22972,7 +27384,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	constexpr void derive(int sym, int s, int e, bool keep_all, int * kids, int & nkids, int depth) noexcept {
 		if (failed) { return; }
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(s));
 			return;
 		}
 		// first completed production, in definition order
@@ -22985,9 +27397,12 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 			if (failed) { return; }
 		}
 		if (chosen < 0) {
-			fail(perr::parse);
+			if constexpr (Tracer::enabled) { tr->event("derive: no completed production (tokens)", g.name_of(sym), s, e); }
+			fail(perr::parse, tok_off(s));
 			return;
 		}
+		if constexpr (Tracer::enabled) { tr->event("derive: production chosen (rule, tokens)", g.name_of(sym), chosen, e - s); }
+		CTLARK_CONSTEXPR_ASSERT(splits[g.prods[chosen].rhs_len] == e, "ctlark internal: derivation splits do not cover the span");
 		const cprod & pr = g.prods[chosen];
 		const csym & sm = g.syms[sym];
 		const bool splice = sm.splice || sm.inlined;
@@ -23049,8 +27464,8 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 
 // --- the whole pipeline
 
-template <const auto & G, const auto & In, int StartSym>
-constexpr auto run_parse() noexcept {
+template <const auto & G, const auto & In, int StartSym, typename Tracer = null_tracer>
+constexpr auto run_parse_traced(Tracer * tr = nullptr) noexcept {
 	constexpr size_t M = In.size();
 	using GT = std::remove_cv_t<std::remove_reference_t<decltype(G)>>;
 	parse_result<M> r{};
@@ -23068,20 +27483,24 @@ constexpr auto run_parse() noexcept {
 	constexpr int item_cap = (dotted_positions(G) + 16) * (static_cast<int>(M) + 2) * 2;
 	constexpr int set_cap = static_cast<int>(M) + 3;
 	chart<GT, item_cap, set_cap> ch{};
-	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch);
+	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch, tr);
 	if (!pipe.ok) {
 		r.err = pipe.err;
 		r.err_pos = pipe.err_pos;
+		r.expected_count = pipe.expected_count;
+		r.expected_total = pipe.expected_total;
+		for (int k = 0; k < pipe.expected_count; ++k) { r.expected[k] = pipe.expected[k]; }
 		return r;
 	}
 
-	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap>;
-	TB tb{G, ch, pipe.toks, pipe.count, in, r};
+	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap, Tracer>;
+	TB tb{G, ch, pipe.toks, pipe.count, in, r, tr};
 	int kids[TB::max_kids]{};
 	int nkids = 0;
 	tb.derive(StartSym, 0, pipe.count, false, kids, nkids, 0);
 	if (tb.failed) {
 		r.err = tb.fail_kind;
+		if (tb.fail_pos >= 0) { r.err_pos = tb.fail_pos; }
 		return r;
 	}
 	if (nkids == 1) {
@@ -23101,6 +27520,3312 @@ constexpr auto run_parse() noexcept {
 	}
 	r.ok = true;
 	return r;
+}
+
+template <const auto & G, const auto & In, int StartSym>
+constexpr auto run_parse() noexcept {
+	return run_parse_traced<G, In, StartSym>();
+}
+
+} // namespace ctlark::detail
+
+#endif
+
+#ifndef CTLARK__TREE__HPP
+#define CTLARK__TREE__HPP
+
+#ifndef CTLARK__TEXT__HPP
+#define CTLARK__TEXT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// A compile-time string as a type: one non-type template parameter per
+// character. Used for names and token values throughout - two texts
+// with the same characters are the same TYPE, which is what makes
+// name comparisons and tree lookups plain type equality.
+
+namespace ctlark {
+
+template <auto... Chars> struct text {
+	// null-terminated so c_str()/data() work as C strings; size() excludes it
+	static constexpr char storage[sizeof...(Chars) + 1]{static_cast<char>(Chars)..., '\0'};
+
+	static constexpr const char * c_str() noexcept {
+		return storage;
+	}
+	static constexpr size_t size() noexcept {
+		return sizeof...(Chars);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Chars) == 0;
+	}
+	static constexpr std::string_view view() noexcept {
+		return std::string_view{storage, sizeof...(Chars)};
+	}
+	constexpr operator std::string_view() const noexcept {
+		return view();
+	}
+	template <auto... Rhs> constexpr bool operator==(text<Rhs...>) const noexcept {
+		return view() == text<Rhs...>::view();
+	}
+	friend constexpr bool operator==(text, std::string_view rhs) noexcept {
+		return view() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, text) noexcept {
+		return lhs == view();
+	}
+#if __cplusplus < 202002L
+	template <auto... Rhs> constexpr bool operator!=(text<Rhs...>) const noexcept {
+		return view() != text<Rhs...>::view();
+	}
+	friend constexpr bool operator!=(text, std::string_view rhs) noexcept {
+		return view() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, text) noexcept {
+		return lhs != view();
+	}
+#endif
+};
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLL__UTILITIES__HPP
+#define CTLL__UTILITIES__HPP
+
+#ifndef CTLL_IN_A_MODULE
+#include <type_traits>
+#endif
+
+#ifdef CTLL_IN_A_MODULE
+#define CTLL_EXPORT export
+#else
+#define CTLL_EXPORT 
+#endif
+
+#if defined __cpp_nontype_template_parameter_class
+    #define CTLL_CNTTP_COMPILER_CHECK 1
+#elif defined __cpp_nontype_template_args
+// compiler which defines correctly feature test macro (not you clang)
+    #if __cpp_nontype_template_args >= 201911L
+        #define CTLL_CNTTP_COMPILER_CHECK 1
+    #elif __cpp_nontype_template_args >= 201411L
+// appleclang 13+
+      #if defined __apple_build_version__
+        #if defined __clang_major__ && __clang_major__ >= 13
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #else 
+// clang 12+
+        #if defined __clang_major__ && __clang_major__ >= 12
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #endif
+    #endif
+#endif
+
+#ifndef CTLL_CNTTP_COMPILER_CHECK
+    #define CTLL_CNTTP_COMPILER_CHECK 0
+#endif
+
+#ifdef _MSC_VER
+#define CTLL_FORCE_INLINE __forceinline
+#else
+#define CTLL_FORCE_INLINE __attribute__((always_inline))
+#endif
+
+namespace ctll {
+	
+template <bool> struct conditional_helper;
+	
+template <> struct conditional_helper<true> {
+	template <typename A, typename> using type = A;
+};
+
+template <> struct conditional_helper<false> {
+	template <typename, typename B> using type = B;
+};
+
+template <bool V, typename A, typename B> using conditional = typename conditional_helper<V>::template type<A,B>;
+	
+}
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#include <type_traits>
+#endif
+
+// The parse tree a parse produces, shaped like lark's: Tree nodes with
+// a data name and children, Token leaves with a terminal type and a
+// value. The whole tree is a TYPE - every name, value and nesting
+// level is encoded in template parameters - so the objects are empty
+// and every accessor is constexpr and static.
+//
+// repr() renders lark's textual form:
+//
+//   Tree(start, [Token(WORD, 'Hello'), Token(WORD, 'World')])
+//
+// and pretty() the indented form. Both live in static storage.
+
+namespace ctlark {
+
+enum class kind {
+	tree,
+	token
+};
+
+template <typename Type, typename Value> struct token;
+template <typename Data, typename... Children> struct tree;
+
+namespace detail {
+
+template <size_t Index, typename Head, typename... Tail> constexpr auto nth() noexcept {
+	if constexpr (Index == 0) {
+		return Head{};
+	} else {
+		return nth<Index - 1, Tail...>();
+	}
+}
+
+// compare a compile-time key against a text type's content
+#if CTLL_CNTTP_COMPILER_CHECK
+template <ctll::fixed_string Key, typename Text> constexpr bool text_matches() noexcept {
+#else
+template <const auto & Key, typename Text> constexpr bool text_matches() noexcept {
+#endif
+	constexpr auto view = Text::view();
+	if (Key.size() != view.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < view.size(); ++i) {
+		if (static_cast<char32_t>(static_cast<unsigned char>(view[i])) != Key[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// --- repr rendering (a size pass, then a fill pass in static storage)
+
+constexpr size_t repr_escaped_size(std::string_view v) noexcept {
+	size_t n = 0;
+	for (const char c : v) { n += (c == '\'' || c == '\\') ? 2 : 1; }
+	return n;
+}
+
+struct repr_sink {
+	char * out;
+	size_t at = 0;
+	constexpr void put(std::string_view s) noexcept {
+		for (const char c : s) { out[at++] = c; }
+	}
+	constexpr void put_escaped(std::string_view s) noexcept {
+		for (const char c : s) {
+			if (c == '\'' || c == '\\') { out[at++] = '\\'; }
+			out[at++] = c;
+		}
+	}
+};
+
+template <typename Node> struct repr_size;
+template <typename Type, typename Value> struct repr_size<token<Type, Value>> {
+	// Token(TYPE, 'value')
+	static constexpr size_t value = 6 + Type::size() + 3 + repr_escaped_size(Value::view()) + 2;
+};
+template <typename Data, typename... Children> struct repr_size<tree<Data, Children...>> {
+	// Tree(data, [c1, c2])
+	static constexpr size_t value = 5 + Data::size() + 3
+		+ (repr_size<Children>::value + ... + 0)
+		+ (sizeof...(Children) > 1 ? (sizeof...(Children) - 1) * 2 : 0)
+		+ 2;
+};
+
+template <typename Node> constexpr void repr_render(repr_sink & s) noexcept;
+
+template <typename Type, typename Value, typename Sink = repr_sink>
+constexpr void repr_render_token(repr_sink & s) noexcept {
+	s.put("Token(");
+	s.put(Type::view());
+	s.put(", '");
+	s.put_escaped(Value::view());
+	s.put("')");
+}
+
+template <typename Data, typename... Children>
+constexpr void repr_render_tree(repr_sink & s) noexcept {
+	s.put("Tree(");
+	s.put(Data::view());
+	s.put(", [");
+	bool first = true;
+	((first ? (void)(first = false) : s.put(", "), repr_render<Children>(s)), ...);
+	s.put("])");
+}
+
+template <typename Node> struct repr_dispatch;
+template <typename Type, typename Value> struct repr_dispatch<token<Type, Value>> {
+	static constexpr void render(repr_sink & s) noexcept {
+		repr_render_token<Type, Value>(s);
+	}
+};
+template <typename Data, typename... Children> struct repr_dispatch<tree<Data, Children...>> {
+	static constexpr void render(repr_sink & s) noexcept {
+		repr_render_tree<Data, Children...>(s);
+	}
+};
+template <typename Node> constexpr void repr_render(repr_sink & s) noexcept {
+	repr_dispatch<Node>::render(s);
+}
+
+template <typename Node> struct repr_storage {
+	static constexpr size_t length = repr_size<Node>::value;
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		repr_render<Node>(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+// --- pretty rendering: data per line, children indented two spaces
+
+template <typename Node> struct pretty_size;
+template <typename Type, typename Value> struct pretty_size<token<Type, Value>> {
+	static constexpr size_t at(size_t indent) noexcept {
+		return indent + Value::size() + 1;
+	}
+};
+template <typename Data, typename... Children> struct pretty_size<tree<Data, Children...>> {
+	static constexpr size_t at(size_t indent) noexcept {
+		return indent + Data::size() + 1 + (pretty_size<Children>::at(indent + 2) + ... + 0);
+	}
+};
+
+template <typename Node> struct pretty_dispatch;
+template <typename Node> constexpr void pretty_render(repr_sink & s, size_t indent) noexcept {
+	pretty_dispatch<Node>::render(s, indent);
+}
+template <typename Type, typename Value> struct pretty_dispatch<token<Type, Value>> {
+	static constexpr void render(repr_sink & s, size_t indent) noexcept {
+		for (size_t i = 0; i < indent; ++i) { s.put(" "); }
+		s.put(Value::view());
+		s.put("\n");
+	}
+};
+template <typename Data, typename... Children> struct pretty_dispatch<tree<Data, Children...>> {
+	static constexpr void render(repr_sink & s, size_t indent) noexcept {
+		for (size_t i = 0; i < indent; ++i) { s.put(" "); }
+		s.put(Data::view());
+		s.put("\n");
+		(pretty_render<Children>(s, indent + 2), ...);
+	}
+};
+
+template <typename Node> struct pretty_storage {
+	static constexpr size_t length = pretty_size<Node>::at(0);
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		pretty_render<Node>(s, 0);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+// --- Token: a terminal match; type() is the terminal name
+
+template <typename Type, typename Value> struct token {
+	static constexpr ctlark::kind node_kind = kind::token;
+	using type_type = Type;
+	using value_type = Value;
+
+	static constexpr bool is_token() noexcept {
+		return true;
+	}
+	static constexpr bool is_tree() noexcept {
+		return false;
+	}
+	static constexpr std::string_view type() noexcept {
+		return Type::view();
+	}
+	static constexpr std::string_view value() noexcept {
+		return Value::view();
+	}
+	static constexpr size_t size() noexcept {
+		return Value::size();
+	}
+	// Token(WORD, 'Hello')
+	static constexpr std::string_view repr() noexcept {
+		return detail::repr_storage<token>::view;
+	}
+
+	constexpr operator std::string_view() const noexcept {
+		return value();
+	}
+	friend constexpr bool operator==(token, std::string_view rhs) noexcept {
+		return value() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, token) noexcept {
+		return lhs == value();
+	}
+#if __cplusplus < 202002L
+	friend constexpr bool operator!=(token, std::string_view rhs) noexcept {
+		return value() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, token) noexcept {
+		return lhs != value();
+	}
+#endif
+};
+
+// --- Tree: a rule match; data() names the rule (or its -> alias)
+
+template <typename Data, typename... Children> struct tree {
+	static constexpr ctlark::kind node_kind = kind::tree;
+	using data_type = Data;
+
+	static constexpr bool is_token() noexcept {
+		return false;
+	}
+	static constexpr bool is_tree() noexcept {
+		return true;
+	}
+	static constexpr std::string_view data() noexcept {
+		return Data::view();
+	}
+
+	static constexpr size_t child_count() noexcept {
+		return sizeof...(Children);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Children) == 0;
+	}
+	template <size_t Index> static constexpr auto child() noexcept {
+		static_assert(Index < sizeof...(Children), "ctlark: child index out of range");
+		return detail::nth<Index, Children...>();
+	}
+
+	// --- child trees by data name (get: first match, a compile error
+	// when absent)
+
+#if CTLL_CNTTP_COMPILER_CHECK
+	template <ctll::fixed_string Name> static constexpr bool contains() noexcept {
+		return (child_matches<Name, Children>() || ...);
+	}
+	template <ctll::fixed_string Name> static constexpr size_t count() noexcept {
+		return (static_cast<size_t>(child_matches<Name, Children>()) + ... + 0);
+	}
+	template <ctll::fixed_string Name> static constexpr auto get() noexcept {
+		static_assert((child_matches<Name, Children>() || ...), "ctlark: no child tree with this data");
+		return find_child<Name, Children...>();
+	}
+#else
+	template <const auto & Name> static constexpr bool contains() noexcept {
+		return (child_matches<Name, Children>() || ...);
+	}
+	template <const auto & Name> static constexpr size_t count() noexcept {
+		return (static_cast<size_t>(child_matches<Name, Children>()) + ... + 0);
+	}
+	template <const auto & Name> static constexpr auto get() noexcept {
+		static_assert((child_matches<Name, Children>() || ...), "ctlark: no child tree with this data");
+		return find_child<Name, Children...>();
+	}
+#endif
+
+	// Tree(start, [Token(WORD, 'Hello'), Token(WORD, 'World')])
+	static constexpr std::string_view repr() noexcept {
+		return detail::repr_storage<tree>::view;
+	}
+	// the indented multi-line form, like lark's Tree.pretty()
+	static constexpr std::string_view pretty() noexcept {
+		return detail::pretty_storage<tree>::view;
+	}
+
+private:
+#if CTLL_CNTTP_COMPILER_CHECK
+	template <ctll::fixed_string Name, typename Child> static constexpr bool child_matches() noexcept {
+#else
+	template <const auto & Name, typename Child> static constexpr bool child_matches() noexcept {
+#endif
+		if constexpr (Child::node_kind == kind::tree) {
+			return detail::text_matches<Name, typename Child::data_type>();
+		} else {
+			return false;
+		}
+	}
+
+#if CTLL_CNTTP_COMPILER_CHECK
+	template <ctll::fixed_string Name, typename Head, typename... Tail> static constexpr auto find_child() noexcept {
+#else
+	template <const auto & Name, typename Head, typename... Tail> static constexpr auto find_child() noexcept {
+#endif
+		if constexpr (child_matches<Name, Head>()) {
+			return Head{};
+		} else {
+			return find_child<Name, Tail...>();
+		}
+	}
+};
+
+// compile-time iteration over a tree's children, each with its own type
+CTLL_EXPORT template <typename F, typename Data, typename... Children>
+constexpr void for_each_child(tree<Data, Children...>, F && f) {
+	(f(Children{}), ...);
+}
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLL__UTILITIES__HPP
+#define CTLL__UTILITIES__HPP
+
+#ifndef CTLL_IN_A_MODULE
+#include <type_traits>
+#endif
+
+#ifdef CTLL_IN_A_MODULE
+#define CTLL_EXPORT export
+#else
+#define CTLL_EXPORT 
+#endif
+
+#if defined __cpp_nontype_template_parameter_class
+    #define CTLL_CNTTP_COMPILER_CHECK 1
+#elif defined __cpp_nontype_template_args
+// compiler which defines correctly feature test macro (not you clang)
+    #if __cpp_nontype_template_args >= 201911L
+        #define CTLL_CNTTP_COMPILER_CHECK 1
+    #elif __cpp_nontype_template_args >= 201411L
+// appleclang 13+
+      #if defined __apple_build_version__
+        #if defined __clang_major__ && __clang_major__ >= 13
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #else 
+// clang 12+
+        #if defined __clang_major__ && __clang_major__ >= 12
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #endif
+    #endif
+#endif
+
+#ifndef CTLL_CNTTP_COMPILER_CHECK
+    #define CTLL_CNTTP_COMPILER_CHECK 0
+#endif
+
+#ifdef _MSC_VER
+#define CTLL_FORCE_INLINE __forceinline
+#else
+#define CTLL_FORCE_INLINE __attribute__((always_inline))
+#endif
+
+namespace ctll {
+	
+template <bool> struct conditional_helper;
+	
+template <> struct conditional_helper<true> {
+	template <typename A, typename> using type = A;
+};
+
+template <> struct conditional_helper<false> {
+	template <typename, typename B> using type = B;
+};
+
+template <bool V, typename A, typename B> using conditional = typename conditional_helper<V>::template type<A,B>;
+	
+}
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// Queryable diagnostics for failed constexpr parses. is_valid<> stays
+// a plain bool; when it is false, error_info() says WHAT failed and
+// WHERE (kind, byte offset, line, column, the expected terminals) and
+// error_message() renders the whole story as one static string:
+//
+//   ctlark: lexical error at line 1, column 7: no expected terminal matches
+//     [1, 2,]
+//           ^
+//   expected: SIGNED_NUMBER, ']', ESCAPED_STRING
+//
+// Everything is computed at compile time; the message lives in static
+// storage via the same size-pass/fill-pass idiom as tree repr().
+
+namespace ctlark {
+
+// what stage of a parse failed
+CTLL_EXPORT enum class error_kind : unsigned char {
+	none,             // the parse succeeded
+	bad_grammar_text, // the grammar text is not valid Lark
+	bad_grammar,      // the grammar text parsed but does not lower to usable tables
+	no_start_rule,    // the requested start rule is not defined in the grammar
+	lex,              // no expected terminal matches the input at the position
+	parse,            // the token stream does not derive from the start rule
+	overflow,         // an internal pool was exhausted (input too large)
+	depth             // the derivation recursion limit was hit
+};
+
+CTLL_EXPORT constexpr std::string_view to_string(error_kind k) noexcept {
+	switch (k) {
+		case error_kind::none: return "none";
+		case error_kind::bad_grammar_text: return "bad grammar text";
+		case error_kind::bad_grammar: return "bad grammar";
+		case error_kind::no_start_rule: return "no start rule";
+		case error_kind::lex: return "lexical error";
+		case error_kind::parse: return "syntax error";
+		case error_kind::overflow: return "capacity overflow";
+		case error_kind::depth: return "depth limit";
+	}
+	return "unknown";
+}
+
+// a byte offset resolved to 1-based line and column
+CTLL_EXPORT struct source_position {
+	size_t offset = 0;
+	size_t line = 1;
+	size_t column = 1;
+};
+
+CTLL_EXPORT constexpr source_position locate(std::string_view text, size_t offset) noexcept {
+	source_position p{};
+	if (offset > text.size()) { offset = text.size(); }
+	p.offset = offset;
+	for (size_t i = 0; i < offset; ++i) {
+		if (text[i] == '\n') {
+			++p.line;
+			p.column = 1;
+		} else {
+			++p.column;
+		}
+	}
+	return p;
+}
+
+// everything a failed parse knows, as one value. For bad_grammar_text
+// the position refers to the GRAMMAR text; for input failures (lex,
+// parse, overflow, depth) it refers to the input. expected[] holds the
+// terminals some Earley item was waiting for at the failure point -
+// named terminals by name, anonymous literals by their spelling.
+CTLL_EXPORT struct error_info_t {
+	error_kind kind = error_kind::none;
+	size_t position = 0;
+	size_t line = 1;
+	size_t column = 1;
+	std::string_view expected[static_cast<size_t>(detail::expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0; // > expected_count when the list was capped
+
+	constexpr bool ok() const noexcept {
+		return kind == error_kind::none;
+	}
+};
+
+namespace detail {
+
+// display spelling of a terminal: named terminals by name, anonymous
+// keyword literals by their content
+template <typename GT> constexpr bool term_is_literal(const GT & g, int sym) noexcept {
+	return g.syms[sym].keyword && g.syms[sym].lit_off >= 0;
+}
+template <typename GT> constexpr std::string_view term_display(const GT & g, int sym) noexcept {
+	if (term_is_literal(g, sym)) { return g.pool_view(g.syms[sym].lit_off, g.syms[sym].lit_len); }
+	return g.name_of(sym);
+}
+
+// a sink that only measures (the size pass of the render)
+struct count_sink {
+	size_t at = 0;
+	constexpr void put(std::string_view s) noexcept {
+		at += s.size();
+	}
+	constexpr void put_escaped(std::string_view s) noexcept {
+		at += repr_escaped_size(s);
+	}
+};
+
+template <typename Sink> constexpr void put_uint(Sink & s, size_t v) noexcept {
+	char buf[20]{};
+	size_t n = 0;
+	do {
+		buf[n++] = static_cast<char>('0' + v % 10);
+		v /= 10;
+	} while (v > 0);
+	for (size_t i = 0; i < n / 2; ++i) {
+		const char t = buf[i];
+		buf[i] = buf[n - 1 - i];
+		buf[n - 1 - i] = t;
+	}
+	s.put(std::string_view{buf, n});
+}
+
+// the line around pos, windowed so the caret is always visible
+inline constexpr size_t snippet_width = 72;
+inline constexpr size_t snippet_caret_max = 60;
+
+template <typename Sink>
+constexpr void render_snippet(Sink & s, std::string_view text, size_t pos) noexcept {
+	if (pos > text.size()) { pos = text.size(); }
+	size_t ls = pos;
+	while (ls > 0 && text[ls - 1] != '\n') { --ls; }
+	size_t le = pos;
+	while (le < text.size() && text[le] != '\n') { ++le; }
+	size_t ws = ls;
+	if (pos - ws > snippet_caret_max) { ws = pos - snippet_caret_max; }
+	size_t we = le;
+	if (we - ws > snippet_width) { we = ws + snippet_width; }
+	s.put("\n  ");
+	for (size_t i = ws; i < we; ++i) {
+		const char c = text[i];
+		s.put((c == '\t' || c == '\r') ? std::string_view{" "} : text.substr(i, 1));
+	}
+	s.put("\n  ");
+	for (size_t i = ws; i < pos; ++i) { s.put(" "); }
+	s.put("^");
+}
+
+// render the whole diagnostic; runs twice (a size pass with
+// count_sink, then a fill pass with repr_sink into static storage)
+template <typename GT, typename Sink>
+constexpr void render_error(Sink & s, const GT & g, error_kind kind, std::string_view text, size_t pos,
+                            const int * expected, int expected_count, int expected_total,
+                            std::string_view start_rule) noexcept {
+	if (kind == error_kind::none) { return; }
+	if (kind == error_kind::bad_grammar) {
+		s.put(g.error_view());
+		return;
+	}
+	if (kind == error_kind::no_start_rule) {
+		s.put("ctlark: the start rule '");
+		s.put(start_rule);
+		s.put("' is not defined in the grammar");
+		return;
+	}
+
+	const source_position at = locate(text, pos);
+	s.put("ctlark: ");
+	switch (kind) {
+		case error_kind::bad_grammar_text: s.put("the grammar text is not valid Lark"); break;
+		case error_kind::lex: s.put("lexical error"); break;
+		case error_kind::parse: s.put("syntax error"); break;
+		case error_kind::overflow: s.put("capacity overflow"); break;
+		case error_kind::depth: s.put("derivation depth limit hit"); break;
+		default: break;
+	}
+	s.put(" at line ");
+	put_uint(s, at.line);
+	s.put(", column ");
+	put_uint(s, at.column);
+	switch (kind) {
+		case error_kind::bad_grammar_text:
+			break;
+		case error_kind::lex:
+			s.put(": no expected terminal matches");
+			break;
+		case error_kind::parse:
+			s.put(pos >= text.size() ? ": unexpected end of input" : ": the input does not match the grammar here");
+			break;
+		case error_kind::overflow:
+			s.put(": an internal pool was exhausted (the input is too large for the compiled limits)");
+			break;
+		case error_kind::depth:
+			s.put(": the input nests too deeply");
+			break;
+		default:
+			break;
+	}
+	render_snippet(s, text, pos);
+	if (expected_count > 0) {
+		s.put("\nexpected: ");
+		for (int i = 0; i < expected_count; ++i) {
+			if (i > 0) { s.put(", "); }
+			const int sym = expected[i];
+			if (term_is_literal(g, sym)) {
+				s.put("'");
+				s.put_escaped(term_display(g, sym));
+				s.put("'");
+			} else {
+				s.put(term_display(g, sym));
+			}
+		}
+		if (expected_total > expected_count) {
+			s.put(", and ");
+			put_uint(s, static_cast<size_t>(expected_total - expected_count));
+			s.put(" more");
+		}
+	}
+}
+
+// the characters of a def's fixed_string members, as string_views in
+// static storage (fixed_strings hold char32_t units carrying bytes)
+template <typename PD> struct input_text {
+	static constexpr size_t length = PD::in.size();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t make() noexcept {
+		out_t o{};
+		for (size_t i = 0; i < length; ++i) { o.content[i] = static_cast<char>(PD::in[i]); }
+		return o;
+	}
+	static constexpr out_t content = make();
+	static constexpr std::string_view view{content.content, length};
+};
+
+template <typename GD> struct grammar_text {
+	static constexpr size_t length = GD::text.size();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t make() noexcept {
+		out_t o{};
+		for (size_t i = 0; i < length; ++i) { o.content[i] = static_cast<char>(GD::text[i]); }
+		return o;
+	}
+	static constexpr out_t content = make();
+	static constexpr std::string_view view{content.content, length};
+};
+
+template <typename PD> struct start_text {
+	static constexpr size_t length = PD::start_name.size();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t make() noexcept {
+		out_t o{};
+		for (size_t i = 0; i < length; ++i) { o.content[i] = static_cast<char>(PD::start_name[i]); }
+		return o;
+	}
+	static constexpr out_t content = make();
+	static constexpr std::string_view view{content.content, length};
+};
+
+// which error_kind a parse_def failed with (none when it succeeded)
+template <typename PD> constexpr error_kind classify() noexcept {
+	if constexpr (!PD::def::text_ok) {
+		return error_kind::bad_grammar_text;
+	} else if constexpr (!PD::def::tables.ok) {
+		return error_kind::bad_grammar;
+	} else if constexpr (PD::start_sym < 0) {
+		return error_kind::no_start_rule;
+	} else if constexpr (PD::result.ok) {
+		return error_kind::none;
+	} else {
+		switch (PD::result.err) {
+			case perr::lex: return error_kind::lex;
+			case perr::overflow: return error_kind::overflow;
+			case perr::depth: return error_kind::depth;
+			default: return error_kind::parse;
+		}
+	}
+}
+
+template <typename PD> constexpr error_info_t error_info_of() noexcept {
+	error_info_t e{};
+	e.kind = classify<PD>();
+	if constexpr (!PD::def::text_ok) {
+		e.position = PD::def::text_error_pos;
+		const source_position at = locate(grammar_text<typename PD::def>::view, e.position);
+		e.line = at.line;
+		e.column = at.column;
+	} else if constexpr (PD::def::tables.ok && PD::start_sym >= 0) {
+		if constexpr (!PD::result.ok) {
+			e.position = static_cast<size_t>(PD::result.err_pos);
+			const source_position at = locate(input_text<PD>::view, e.position);
+			e.line = at.line;
+			e.column = at.column;
+			e.expected_count = PD::result.expected_count;
+			e.expected_total = PD::result.expected_total;
+			for (int i = 0; i < PD::result.expected_count; ++i) {
+				e.expected[i] = term_display(PD::def::tables, PD::result.expected[i]);
+			}
+		}
+	}
+	return e;
+}
+
+// the rendered message in static storage (only instantiated on demand,
+// and only for failed parses)
+template <typename PD> struct message_storage {
+	static constexpr error_kind kind = classify<PD>();
+
+	static constexpr std::string_view text() noexcept {
+		if constexpr (kind == error_kind::bad_grammar_text) {
+			return grammar_text<typename PD::def>::view;
+		} else {
+			return input_text<PD>::view;
+		}
+	}
+	static constexpr size_t pos() noexcept {
+		if constexpr (kind == error_kind::bad_grammar_text) {
+			return PD::def::text_error_pos;
+		} else {
+			return static_cast<size_t>(PD::result.err_pos);
+		}
+	}
+
+	template <typename Sink> static constexpr void render(Sink & s) noexcept {
+		render_error(s, PD::def::tables, kind, text(), pos(), PD::result.expected, PD::result.expected_count,
+		             PD::result.expected_total, start_text<PD>::view);
+	}
+
+	static constexpr size_t measure() noexcept {
+		count_sink s{};
+		render(s);
+		return s.at;
+	}
+	static constexpr size_t length = measure();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		render(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLARK__LIFT__HPP
+#define CTLARK__LIFT__HPP
+
+#ifndef CTLARK__EARLEY__HPP
+#define CTLARK__EARLEY__HPP
+
+#ifndef CTLARK__COMPILE__HPP
+#define CTLARK__COMPILE__HPP
+
+#ifndef CTLARK__AST__HPP
+#define CTLARK__AST__HPP
+
+#ifndef CTLARK__TEXT__HPP
+#define CTLARK__TEXT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// A compile-time string as a type: one non-type template parameter per
+// character. Used for names and token values throughout - two texts
+// with the same characters are the same TYPE, which is what makes
+// name comparisons and tree lookups plain type equality.
+
+namespace ctlark {
+
+template <auto... Chars> struct text {
+	// null-terminated so c_str()/data() work as C strings; size() excludes it
+	static constexpr char storage[sizeof...(Chars) + 1]{static_cast<char>(Chars)..., '\0'};
+
+	static constexpr const char * c_str() noexcept {
+		return storage;
+	}
+	static constexpr size_t size() noexcept {
+		return sizeof...(Chars);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Chars) == 0;
+	}
+	static constexpr std::string_view view() noexcept {
+		return std::string_view{storage, sizeof...(Chars)};
+	}
+	constexpr operator std::string_view() const noexcept {
+		return view();
+	}
+	template <auto... Rhs> constexpr bool operator==(text<Rhs...>) const noexcept {
+		return view() == text<Rhs...>::view();
+	}
+	friend constexpr bool operator==(text, std::string_view rhs) noexcept {
+		return view() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, text) noexcept {
+		return lhs == view();
+	}
+#if __cplusplus < 202002L
+	template <auto... Rhs> constexpr bool operator!=(text<Rhs...>) const noexcept {
+		return view() != text<Rhs...>::view();
+	}
+	friend constexpr bool operator!=(text, std::string_view rhs) noexcept {
+		return view() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, text) noexcept {
+		return lhs != view();
+	}
+#endif
+};
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// The type-level AST of a Lark grammar, built by the semantic actions
+// (actions.hpp) while CTLL parses the grammar text. Each node knows how
+// to lower itself into the flat constexpr expression program that
+// compile.hpp works with: emit(builder) appends nodes and returns the
+// index of the root it created. The builder is duck-typed (see
+// compile.hpp for the real one) so this header stays independent.
+
+namespace ctlark::ast {
+
+// flat program node kinds
+enum class pk : unsigned char {
+	seq,       // children in order
+	alt,       // children are alternatives
+	star,      // one child, zero or more
+	plus,      // one child, one or more
+	opt,       // one child, zero or one
+	rep,       // one child, a=min, b=max (-1 = unbounded)
+	chr,       // a = the character
+	range,     // a = low, b = high
+	any,       // any character (except newline, unless dotall)
+	str,       // literal string: a = pool offset, b = length
+	cls,       // character class, a = 1 if negated, children are members
+	cw,        // \w   word character
+	cd,        // \d   digit
+	cs,        // \s   whitespace
+	cnw,       // \W
+	cnd,       // \D
+	cns,       // \S
+	rref,      // rule reference, a = symbol id
+	tref,      // terminal reference, a = symbol id
+	ci,        // one child, match case-insensitively
+	dotall,    // one child, any also matches newline
+	rx         // one child, provenance: came from a /regex/ literal
+};
+
+// --- expression nodes
+
+template <typename... Es> struct seq {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::seq);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename... Es> struct alt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::alt);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename E> struct star {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::star);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct plus {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::plus);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct opt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::opt);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E, int Min, int Max> struct rep {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rep, Min, Max);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <auto C> struct chr {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::chr, static_cast<int>(C));
+	}
+};
+
+template <auto Lo, auto Hi> struct crange {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::range, static_cast<int>(Lo), static_cast<int>(Hi));
+	}
+};
+
+struct any_char {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::any);
+	}
+};
+
+template <typename Text, bool Ci> struct lit {
+	using text_type = Text;
+	static constexpr bool case_insensitive = Ci;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_str(Text::view(), Ci);
+	}
+};
+
+struct word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cw); }
+};
+struct digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cd); }
+};
+struct space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cs); }
+};
+struct not_word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnw); }
+};
+struct not_digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnd); }
+};
+struct not_space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cns); }
+};
+
+template <bool Neg, typename... Members> struct cls {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::cls, Neg ? 1 : 0);
+		int last = -1;
+		((last = b.link(self, last, Members::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename Name> struct rule_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), false);
+	}
+};
+
+template <typename Name> struct term_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), true);
+	}
+};
+
+template <typename E> struct ci {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::ci);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct dotall {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::dotall);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// provenance wrapper: this expression came from a /regex/ literal, so
+// in a rule body it is ONE anonymous terminal, not structure
+template <typename E> struct rx {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rx);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// --- one alternative of a definition; Alias is void or a text
+
+template <typename Seq, typename Alias> struct branch { };
+
+namespace detail {
+
+template <typename Br> struct branch_parts;
+template <typename Seq, typename Alias> struct branch_parts<branch<Seq, Alias>> {
+	using seq = Seq;
+	using alias = Alias;
+	static constexpr bool aliased = !std::is_void_v<Alias>;
+	static constexpr std::string_view alias_view() noexcept {
+		if constexpr (aliased) {
+			return Alias::view();
+		} else {
+			return std::string_view{};
+		}
+	}
+};
+
+} // namespace detail
+
+// --- top-level items
+
+template <typename Name, bool Bang, bool Cond, int Priority, typename... Branches> struct rule_def {
+	using name_type = Name;
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_rule(Name::view(), Bang, Cond, Priority);
+		(b.add_alternative(sym, detail::branch_parts<Branches>::seq::emit(b),
+		                   detail::branch_parts<Branches>::alias_view()), ...);
+	}
+};
+
+template <typename Name, int Priority, typename... Branches> struct term_def {
+	using name_type = Name;
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in terminal definitions");
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_term(Name::view(), Priority);
+		(b.add_term_alternative(sym, detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+template <typename... Branches> struct ignore_def {
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in %ignore");
+	template <typename B> static constexpr void collect(B & b) {
+		(b.add_ignore(detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+// %import path -> alias (or the same name); Segs are the path segments
+template <typename Alias, typename... Segs> struct import_def {
+	template <typename B> static constexpr void collect(B & b) {
+		constexpr size_t n = sizeof...(Segs);
+		static_assert(n >= 2, "ctlark: %import needs a dotted path (only common.* is supported)");
+		const std::string_view segs[]{Segs::view()...};
+		b.import_builtin(segs, n, Alias::view());
+	}
+};
+
+// the whole grammar, in source order
+template <typename... Items> struct grammar {
+	static constexpr size_t item_count = sizeof...(Items);
+	template <typename B> static constexpr void collect(B & b) {
+		(Items::collect(b), ...);
+	}
+};
+
+} // namespace ctlark::ast
+
+#endif
+
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
+
+#endif
+
+#ifndef CTLARK__COMMON__HPP
+#define CTLARK__COMMON__HPP
+
+#ifndef CTLARK__AST__HPP
+#define CTLARK__AST__HPP
+
+#ifndef CTLARK__TEXT__HPP
+#define CTLARK__TEXT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// A compile-time string as a type: one non-type template parameter per
+// character. Used for names and token values throughout - two texts
+// with the same characters are the same TYPE, which is what makes
+// name comparisons and tree lookups plain type equality.
+
+namespace ctlark {
+
+template <auto... Chars> struct text {
+	// null-terminated so c_str()/data() work as C strings; size() excludes it
+	static constexpr char storage[sizeof...(Chars) + 1]{static_cast<char>(Chars)..., '\0'};
+
+	static constexpr const char * c_str() noexcept {
+		return storage;
+	}
+	static constexpr size_t size() noexcept {
+		return sizeof...(Chars);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Chars) == 0;
+	}
+	static constexpr std::string_view view() noexcept {
+		return std::string_view{storage, sizeof...(Chars)};
+	}
+	constexpr operator std::string_view() const noexcept {
+		return view();
+	}
+	template <auto... Rhs> constexpr bool operator==(text<Rhs...>) const noexcept {
+		return view() == text<Rhs...>::view();
+	}
+	friend constexpr bool operator==(text, std::string_view rhs) noexcept {
+		return view() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, text) noexcept {
+		return lhs == view();
+	}
+#if __cplusplus < 202002L
+	template <auto... Rhs> constexpr bool operator!=(text<Rhs...>) const noexcept {
+		return view() != text<Rhs...>::view();
+	}
+	friend constexpr bool operator!=(text, std::string_view rhs) noexcept {
+		return view() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, text) noexcept {
+		return lhs != view();
+	}
+#endif
+};
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// The type-level AST of a Lark grammar, built by the semantic actions
+// (actions.hpp) while CTLL parses the grammar text. Each node knows how
+// to lower itself into the flat constexpr expression program that
+// compile.hpp works with: emit(builder) appends nodes and returns the
+// index of the root it created. The builder is duck-typed (see
+// compile.hpp for the real one) so this header stays independent.
+
+namespace ctlark::ast {
+
+// flat program node kinds
+enum class pk : unsigned char {
+	seq,       // children in order
+	alt,       // children are alternatives
+	star,      // one child, zero or more
+	plus,      // one child, one or more
+	opt,       // one child, zero or one
+	rep,       // one child, a=min, b=max (-1 = unbounded)
+	chr,       // a = the character
+	range,     // a = low, b = high
+	any,       // any character (except newline, unless dotall)
+	str,       // literal string: a = pool offset, b = length
+	cls,       // character class, a = 1 if negated, children are members
+	cw,        // \w   word character
+	cd,        // \d   digit
+	cs,        // \s   whitespace
+	cnw,       // \W
+	cnd,       // \D
+	cns,       // \S
+	rref,      // rule reference, a = symbol id
+	tref,      // terminal reference, a = symbol id
+	ci,        // one child, match case-insensitively
+	dotall,    // one child, any also matches newline
+	rx         // one child, provenance: came from a /regex/ literal
+};
+
+// --- expression nodes
+
+template <typename... Es> struct seq {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::seq);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename... Es> struct alt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::alt);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename E> struct star {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::star);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct plus {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::plus);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct opt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::opt);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E, int Min, int Max> struct rep {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rep, Min, Max);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <auto C> struct chr {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::chr, static_cast<int>(C));
+	}
+};
+
+template <auto Lo, auto Hi> struct crange {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::range, static_cast<int>(Lo), static_cast<int>(Hi));
+	}
+};
+
+struct any_char {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::any);
+	}
+};
+
+template <typename Text, bool Ci> struct lit {
+	using text_type = Text;
+	static constexpr bool case_insensitive = Ci;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_str(Text::view(), Ci);
+	}
+};
+
+struct word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cw); }
+};
+struct digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cd); }
+};
+struct space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cs); }
+};
+struct not_word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnw); }
+};
+struct not_digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnd); }
+};
+struct not_space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cns); }
+};
+
+template <bool Neg, typename... Members> struct cls {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::cls, Neg ? 1 : 0);
+		int last = -1;
+		((last = b.link(self, last, Members::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename Name> struct rule_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), false);
+	}
+};
+
+template <typename Name> struct term_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), true);
+	}
+};
+
+template <typename E> struct ci {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::ci);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct dotall {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::dotall);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// provenance wrapper: this expression came from a /regex/ literal, so
+// in a rule body it is ONE anonymous terminal, not structure
+template <typename E> struct rx {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rx);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// --- one alternative of a definition; Alias is void or a text
+
+template <typename Seq, typename Alias> struct branch { };
+
+namespace detail {
+
+template <typename Br> struct branch_parts;
+template <typename Seq, typename Alias> struct branch_parts<branch<Seq, Alias>> {
+	using seq = Seq;
+	using alias = Alias;
+	static constexpr bool aliased = !std::is_void_v<Alias>;
+	static constexpr std::string_view alias_view() noexcept {
+		if constexpr (aliased) {
+			return Alias::view();
+		} else {
+			return std::string_view{};
+		}
+	}
+};
+
+} // namespace detail
+
+// --- top-level items
+
+template <typename Name, bool Bang, bool Cond, int Priority, typename... Branches> struct rule_def {
+	using name_type = Name;
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_rule(Name::view(), Bang, Cond, Priority);
+		(b.add_alternative(sym, detail::branch_parts<Branches>::seq::emit(b),
+		                   detail::branch_parts<Branches>::alias_view()), ...);
+	}
+};
+
+template <typename Name, int Priority, typename... Branches> struct term_def {
+	using name_type = Name;
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in terminal definitions");
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_term(Name::view(), Priority);
+		(b.add_term_alternative(sym, detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+template <typename... Branches> struct ignore_def {
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in %ignore");
+	template <typename B> static constexpr void collect(B & b) {
+		(b.add_ignore(detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+// %import path -> alias (or the same name); Segs are the path segments
+template <typename Alias, typename... Segs> struct import_def {
+	template <typename B> static constexpr void collect(B & b) {
+		constexpr size_t n = sizeof...(Segs);
+		static_assert(n >= 2, "ctlark: %import needs a dotted path (only common.* is supported)");
+		const std::string_view segs[]{Segs::view()...};
+		b.import_builtin(segs, n, Alias::view());
+	}
+};
+
+// the whole grammar, in source order
+template <typename... Items> struct grammar {
+	static constexpr size_t item_count = sizeof...(Items);
+	template <typename B> static constexpr void collect(B & b) {
+		(Items::collect(b), ...);
+	}
+};
+
+} // namespace ctlark::ast
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <string_view>
+#endif
+
+// The supported subset of lark's common.lark, embedded as grammar AST
+// snippets: %import common.X emits the matching pattern and defines it
+// as a terminal. Everything here is self-contained (no references), so
+// imports cannot recurse.
+
+namespace ctlark::detail {
+
+namespace builtin {
+
+using namespace ctlark::ast;
+
+using u_digit = crange<'0', '9'>;
+using u_lcase = crange<'a', 'z'>;
+using u_ucase = crange<'A', 'Z'>;
+using u_letter = cls<false, u_lcase, u_ucase>;
+using u_sign = opt<cls<false, chr<'+'>, chr<'-'>>>;
+
+using DIGIT = u_digit;
+using HEXDIGIT = cls<false, u_digit, crange<'a', 'f'>, crange<'A', 'F'>>;
+using INT = plus<u_digit>;
+using SIGNED_INT = seq<u_sign, INT>;
+// INT "." INT? | "." INT
+using DECIMAL = alt<seq<INT, chr<'.'>, opt<INT>>, seq<chr<'.'>, INT>>;
+using u_exp = seq<cls<false, chr<'e'>, chr<'E'>>, u_sign, INT>;
+using FLOAT = alt<seq<INT, u_exp>, seq<DECIMAL, opt<u_exp>>>;
+using SIGNED_FLOAT = seq<u_sign, FLOAT>;
+using NUMBER = alt<FLOAT, INT>;
+using SIGNED_NUMBER = seq<u_sign, NUMBER>;
+
+// "..." with backslash escapes, single line
+using ESCAPED_STRING = seq<
+	chr<'"'>,
+	star<alt<seq<chr<'\\'>, any_char>,
+	         cls<true, chr<'"'>, chr<'\\'>, chr<'\x0A'>>>>,
+	chr<'"'>>;
+
+using LCASE_LETTER = u_lcase;
+using UCASE_LETTER = u_ucase;
+using LETTER = u_letter;
+using WORD = plus<u_letter>;
+using CNAME = seq<cls<false, chr<'_'>, u_lcase, u_ucase>,
+                  star<cls<false, chr<'_'>, u_lcase, u_ucase, u_digit>>>;
+
+using WS_INLINE = plus<cls<false, chr<' '>, chr<'\x09'>>>;
+using WS = plus<space_class>;
+using CR = chr<'\x0D'>;
+using LF = chr<'\x0A'>;
+using NEWLINE = plus<seq<opt<CR>, LF>>;
+
+using SH_COMMENT = seq<chr<'#'>, star<cls<true, chr<'\x0A'>>>>;
+using CPP_COMMENT = seq<chr<'/'>, chr<'/'>, star<cls<true, chr<'\x0A'>>>>;
+// /* ([^*] | *+[^*/])* *+ /
+using C_COMMENT = seq<
+	chr<'/'>, chr<'*'>,
+	star<alt<cls<true, chr<'*'>>,
+	         seq<plus<chr<'*'>>, cls<true, chr<'*'>, chr<'/'>>>>>,
+	plus<chr<'*'>>, chr<'/'>>;
+using SQL_COMMENT = seq<chr<'-'>, chr<'-'>, star<cls<true, chr<'\x0A'>>>>;
+
+} // namespace builtin
+
+// emit the named builtin into the builder; returns the root node id or
+// -1 when the name is not a supported common.lark terminal
+template <typename B> constexpr int emit_common(std::string_view name, B & b) {
+	if (name == "DIGIT") { return builtin::DIGIT::emit(b); }
+	if (name == "HEXDIGIT") { return builtin::HEXDIGIT::emit(b); }
+	if (name == "INT") { return builtin::INT::emit(b); }
+	if (name == "SIGNED_INT") { return builtin::SIGNED_INT::emit(b); }
+	if (name == "DECIMAL") { return builtin::DECIMAL::emit(b); }
+	if (name == "FLOAT") { return builtin::FLOAT::emit(b); }
+	if (name == "SIGNED_FLOAT") { return builtin::SIGNED_FLOAT::emit(b); }
+	if (name == "NUMBER") { return builtin::NUMBER::emit(b); }
+	if (name == "SIGNED_NUMBER") { return builtin::SIGNED_NUMBER::emit(b); }
+	if (name == "ESCAPED_STRING") { return builtin::ESCAPED_STRING::emit(b); }
+	if (name == "LCASE_LETTER") { return builtin::LCASE_LETTER::emit(b); }
+	if (name == "UCASE_LETTER") { return builtin::UCASE_LETTER::emit(b); }
+	if (name == "LETTER") { return builtin::LETTER::emit(b); }
+	if (name == "WORD") { return builtin::WORD::emit(b); }
+	if (name == "CNAME") { return builtin::CNAME::emit(b); }
+	if (name == "WS_INLINE") { return builtin::WS_INLINE::emit(b); }
+	if (name == "WS") { return builtin::WS::emit(b); }
+	if (name == "CR") { return builtin::CR::emit(b); }
+	if (name == "LF") { return builtin::LF::emit(b); }
+	if (name == "NEWLINE") { return builtin::NEWLINE::emit(b); }
+	if (name == "SH_COMMENT") { return builtin::SH_COMMENT::emit(b); }
+	if (name == "CPP_COMMENT") { return builtin::CPP_COMMENT::emit(b); }
+	if (name == "C_COMMENT") { return builtin::C_COMMENT::emit(b); }
+	if (name == "SQL_COMMENT") { return builtin::SQL_COMMENT::emit(b); }
+	return -1;
+}
+
+} // namespace ctlark::detail
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <cstdint>
+#include <string_view>
+#endif
+
+// Lowering the type-level grammar AST into constexpr tables:
+//
+//   * symbols (rules and terminals) interned by name; string literals
+//     in rule bodies become keyword terminals (merged with an existing
+//     terminal defined as the same literal), regexes and ranges become
+//     anonymous pattern terminals
+//   * quantifiers, groups and alternations inside rule bodies are
+//     desugared into synthetic helper rules marked splice, so the
+//     productions Earley sees are a plain CFG
+//   * every terminal pattern is compiled to a Thompson NFA over bytes
+//     (edges carry 256-bit masks), with terminal-in-terminal
+//     references inlined and case-insensitivity/dotall propagated
+//   * nullability is computed for the Aycock-Horspool Earley fix
+//
+// Everything is plain constexpr evaluation - by the time Earley runs
+// (earley.hpp) the grammar is data, not types. Errors set ok=false
+// and a static message; the entry points static_assert on ok.
+
+namespace ctlark::detail {
+
+using ast::pk;
+
+// capacities, derived from the grammar text length
+template <size_t N> struct climits {
+	static constexpr int nodes = static_cast<int>(4 * N + 320);
+	static constexpr int pool = static_cast<int>(4 * N + 512);
+	static constexpr int syms = static_cast<int>(N + 64);
+	static constexpr int alts = static_cast<int>(N + 32);
+	static constexpr int prods = static_cast<int>(4 * N + 64);
+	static constexpr int rhs = static_cast<int>(8 * N + 128);
+	static constexpr int states = static_cast<int>(16 * N + 1024);
+	static constexpr int edges = static_cast<int>(16 * N + 1024);
+	static constexpr int ignores = 64;
+	static constexpr int max_rhs_len = 128;
+	static constexpr int max_depth = 64;
+};
+
+struct cnode {
+	pk kind;
+	int a;
+	int b;
+	int child;
+	int sib;
+};
+
+struct csym {
+	int name_off;
+	int name_len;
+	bool terminal;
+	bool defined;
+	bool ignored;
+	bool keyword;   // anonymous string literal from a rule body
+	bool anon;      // anonymous pattern terminal
+	bool ci;        // keyword literal with the i flag
+	int lit_off;    // keyword content, for merging (-1 otherwise)
+	int lit_len;
+	int prio;
+	int pattern;    // terminals: root node id (-1 = not defined)
+	bool bang;      // rules: ! keep all tokens
+	bool cond;      // rules: ? inline when a single child
+	bool inlined;   // rules: name starts with _
+	bool splice;    // rules: synthetic helper, always splice children
+	int nfa_start;
+	int nfa_accept;
+};
+
+struct calt {
+	int sym;
+	int root;
+	int alias_off;
+	int alias_len;
+};
+
+struct cprod {
+	int lhs;
+	int rhs_off;
+	int rhs_len;
+	int alias_off;
+	int alias_len;
+};
+
+// a 256-bit byte set
+struct mask256 {
+	std::uint64_t w[4]{};
+	constexpr void set(int c) noexcept {
+		w[(c & 0xFF) >> 6] |= (std::uint64_t{1} << (c & 63));
+	}
+	constexpr bool get(int c) const noexcept {
+		return (w[(c & 0xFF) >> 6] >> (c & 63)) & 1;
+	}
+	constexpr void set_range(int lo, int hi) noexcept {
+		for (int c = lo; c <= hi && c <= 0xFF; ++c) { set(c); }
+	}
+	constexpr void invert() noexcept {
+		for (auto & x : w) { x = ~x; }
+	}
+	constexpr void merge(const mask256 & o) noexcept {
+		for (int i = 0; i < 4; ++i) { w[i] |= o.w[i]; }
+	}
+	// close under ASCII case flipping
+	constexpr void ci_close() noexcept {
+		for (int c = 'a'; c <= 'z'; ++c) {
+			if (get(c)) { set(c - 32); }
+		}
+		for (int c = 'A'; c <= 'Z'; ++c) {
+			if (get(c)) { set(c + 32); }
+		}
+	}
+};
+
+constexpr mask256 mask_digit() noexcept {
+	mask256 m{};
+	m.set_range('0', '9');
+	return m;
+}
+constexpr mask256 mask_word() noexcept {
+	mask256 m = mask_digit();
+	m.set_range('a', 'z');
+	m.set_range('A', 'Z');
+	m.set('_');
+	return m;
+}
+constexpr mask256 mask_space() noexcept {
+	mask256 m{};
+	m.set(' ');
+	m.set_range(0x09, 0x0D); // \t \n \v \f \r
+	return m;
+}
+constexpr mask256 mask_not(mask256 m) noexcept {
+	m.invert();
+	return m;
+}
+
+struct cedge {
+	int to;
+	bool eps;
+	mask256 mask;
+	int next; // next edge of the same state
+};
+
+struct nfa_frag {
+	int in;
+	int out;
+};
+
+// punctuation names for anonymous keyword terminals (lark-style)
+constexpr std::string_view punct_name(char c) noexcept {
+	switch (c) {
+		case '+': return "PLUS";
+		case '-': return "MINUS";
+		case '*': return "STAR";
+		case '/': return "SLASH";
+		case '\\': return "BACKSLASH";
+		case '(': return "LPAR";
+		case ')': return "RPAR";
+		case '[': return "LSQB";
+		case ']': return "RSQB";
+		case '{': return "LBRACE";
+		case '}': return "RBRACE";
+		case ',': return "COMMA";
+		case ';': return "SEMICOLON";
+		case ':': return "COLON";
+		case '=': return "EQUAL";
+		case '.': return "DOT";
+		case '!': return "BANG";
+		case '?': return "QMARK";
+		case '<': return "LESSTHAN";
+		case '>': return "MORETHAN";
+		case '|': return "VBAR";
+		case '&': return "AMPERSAND";
+		case '^': return "CIRCUMFLEX";
+		case '%': return "PERCENT";
+		case '~': return "TILDE";
+		case '@': return "AT";
+		case '#': return "HASH";
+		case '$': return "DOLLAR";
+		case '"': return "DBLQUOTE";
+		case '\'': return "QUOTE";
+		case '`': return "BACKQUOTE";
+		default: return "";
+	}
+}
+
+template <size_t N> struct grammar_tables {
+	using lim = climits<N>;
+
+	bool ok = true;
+	char error[128]{};
+
+	cnode nodes[static_cast<size_t>(lim::nodes)]{};
+	int node_count = 0;
+
+	char pool[static_cast<size_t>(lim::pool)]{};
+	int pool_count = 0;
+
+	csym syms[static_cast<size_t>(lim::syms)]{};
+	int sym_count = 0;
+
+	calt alts[static_cast<size_t>(lim::alts)]{};
+	int alt_count = 0;
+
+	int ignore_roots[static_cast<size_t>(lim::ignores)]{};
+	int ignore_count = 0;
+
+	cprod prods[static_cast<size_t>(lim::prods)]{};
+	int prod_count = 0;
+	int rhs_pool[static_cast<size_t>(lim::rhs)]{};
+	int rhs_count = 0;
+
+	int state_first_edge[static_cast<size_t>(lim::states)]{};
+	int state_count = 0;
+	cedge edges[static_cast<size_t>(lim::edges)]{};
+	int edge_count = 0;
+
+	bool nullable[static_cast<size_t>(lim::syms)]{};
+	int anon_counter = 0;
+	int helper_counter = 0;
+
+	// --- error handling
+
+	constexpr void fail(std::string_view msg) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
+		error[i] = '\0';
+	}
+	constexpr std::string_view error_view() const noexcept {
+		size_t n = 0;
+		while (n < sizeof(error) && error[n] != '\0') { ++n; }
+		return std::string_view{error, n};
+	}
+
+	// --- pools
+
+	constexpr int pool_add(std::string_view s) noexcept {
+		if (pool_count + static_cast<int>(s.size()) > lim::pool) {
+			fail("ctlark: grammar too large (string pool)");
+			return 0;
+		}
+		const int off = pool_count;
+		for (const char c : s) { pool[static_cast<size_t>(pool_count++)] = c; }
+		return off;
+	}
+	constexpr std::string_view pool_view(int off, int len) const noexcept {
+		return std::string_view{pool + off, static_cast<size_t>(len)};
+	}
+	constexpr std::string_view name_of(int sym) const noexcept {
+		return pool_view(syms[sym].name_off, syms[sym].name_len);
+	}
+
+	// --- AST emission interface (called by ast::* nodes)
+
+	constexpr int add(pk kind, int a = 0, int b = 0) noexcept {
+		if (node_count >= lim::nodes) {
+			fail("ctlark: grammar too large (node pool)");
+			return 0;
+		}
+		nodes[node_count] = cnode{kind, a, b, -1, -1};
+		return node_count++;
+	}
+	constexpr int link(int parent, int last, int child) noexcept {
+		if (!ok) { return child; }
+		if (last < 0) {
+			nodes[parent].child = child;
+		} else {
+			nodes[last].sib = child;
+		}
+		return child;
+	}
+	constexpr int add_str(std::string_view s, bool ci) noexcept {
+		const int off = pool_add(s);
+		const int n = add(pk::str, off, static_cast<int>(s.size()));
+		if (ci) {
+			const int w = add(pk::ci);
+			if (ok) { nodes[w].child = n; }
+			return w;
+		}
+		return n;
+	}
+	constexpr int intern(std::string_view name, bool terminal) noexcept {
+		for (int i = 0; i < sym_count; ++i) {
+			if (syms[i].terminal == terminal && name_of(i) == name) { return i; }
+		}
+		if (sym_count >= lim::syms) {
+			fail("ctlark: grammar too large (symbols)");
+			return 0;
+		}
+		csym s{};
+		s.name_off = pool_add(name);
+		s.name_len = static_cast<int>(name.size());
+		s.terminal = terminal;
+		s.lit_off = -1;
+		s.lit_len = 0;
+		s.pattern = -1;
+		s.nfa_start = -1;
+		s.nfa_accept = -1;
+		s.inlined = !terminal && !name.empty() && name[0] == '_';
+		syms[sym_count] = s;
+		return sym_count++;
+	}
+	constexpr int add_ref(std::string_view name, bool terminal) noexcept {
+		return add(terminal ? pk::tref : pk::rref, intern(name, terminal));
+	}
+	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
+		const int s = intern(name, false);
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
+		syms[s].defined = true;
+		syms[s].bang = bang;
+		syms[s].cond = cond;
+		syms[s].prio = prio;
+		return s;
+	}
+	constexpr int def_term(std::string_view name, int prio) noexcept {
+		const int s = intern(name, true);
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
+		syms[s].defined = true;
+		syms[s].prio = prio;
+		return s;
+	}
+	constexpr void add_alternative(int sym, int root, std::string_view alias) noexcept {
+		if (alt_count >= lim::alts) {
+			fail("ctlark: grammar too large (alternatives)");
+			return;
+		}
+		const int aoff = alias.empty() ? -1 : pool_add(alias);
+		alts[alt_count++] = calt{sym, root, aoff, static_cast<int>(alias.size())};
+	}
+	constexpr void add_term_alternative(int sym, int root) noexcept {
+		if (!ok) { return; }
+		if (syms[sym].pattern < 0) {
+			syms[sym].pattern = root;
+			return;
+		}
+		// further alternatives merge under an alt node
+		const int existing = syms[sym].pattern;
+		if (nodes[existing].kind == pk::alt) {
+			int last = nodes[existing].child;
+			while (last >= 0 && nodes[last].sib >= 0) { last = nodes[last].sib; }
+			nodes[last].sib = root;
+		} else {
+			const int a = add(pk::alt);
+			if (!ok) { return; }
+			nodes[a].child = existing;
+			nodes[existing].sib = root;
+			syms[sym].pattern = a;
+		}
+	}
+	constexpr void add_ignore(int root) noexcept {
+		if (ignore_count >= lim::ignores) {
+			fail("ctlark: too many %ignore statements");
+			return;
+		}
+		ignore_roots[ignore_count++] = root;
+	}
+	constexpr void import_builtin(const std::string_view * segs, size_t n, std::string_view alias) noexcept {
+		if (n != 2 || segs[0] != "common") {
+			fail("ctlark: %import supports only common.<NAME>");
+			return;
+		}
+		const int root = emit_common(segs[1], *this);
+		if (root < 0) {
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
+			return;
+		}
+		const int s = intern(alias, true);
+		if (syms[s].defined) {
+			fail("ctlark: duplicate terminal definition (%import)", alias);
+			return;
+		}
+		syms[s].defined = true;
+		syms[s].pattern = root;
+	}
+
+	// --- lowering rule bodies to productions
+
+	struct rhs_buf {
+		int ids[static_cast<size_t>(lim::max_rhs_len)]{};
+		int len = 0;
+	};
+
+	constexpr void buf_push(rhs_buf & b, int sym) noexcept {
+		if (b.len >= lim::max_rhs_len) {
+			fail("ctlark: rule alternative too long");
+			return;
+		}
+		b.ids[b.len++] = sym;
+	}
+
+	constexpr void add_prod(int lhs, const rhs_buf & b, int alias_off, int alias_len) noexcept {
+		if (prod_count >= lim::prods || rhs_count + b.len > lim::rhs) {
+			fail("ctlark: grammar too large (productions)");
+			return;
+		}
+		const int off = rhs_count;
+		for (int i = 0; i < b.len; ++i) { rhs_pool[rhs_count++] = b.ids[i]; }
+		prods[prod_count++] = cprod{lhs, off, b.len, alias_off, alias_len};
+	}
+
+	constexpr int new_helper() noexcept {
+		char name[16]{'_', '_', 'h'};
+		int len = 3;
+		int v = helper_counter++;
+		char digits[8]{};
+		int nd = 0;
+		do {
+			digits[nd++] = static_cast<char>('0' + v % 10);
+			v /= 10;
+		} while (v > 0);
+		while (nd > 0) { name[len++] = digits[--nd]; }
+		const int s = intern(std::string_view{name, static_cast<size_t>(len)}, false);
+		syms[s].defined = true;
+		syms[s].splice = true;
+		return s;
+	}
+
+	constexpr int new_anon_pattern(int root) noexcept {
+		char name[20]{'_', '_', 'a', 'n', 'o', 'n', '_'};
+		int len = 7;
+		int v = anon_counter++;
+		char digits[8]{};
+		int nd = 0;
+		do {
+			digits[nd++] = static_cast<char>('0' + v % 10);
+			v /= 10;
+		} while (v > 0);
+		while (nd > 0) { name[len++] = digits[--nd]; }
+		const int s = intern(std::string_view{name, static_cast<size_t>(len)}, true);
+		syms[s].defined = true;
+		syms[s].anon = true;
+		syms[s].pattern = root;
+		return s;
+	}
+
+	// a keyword terminal for a string literal in a rule body; merged
+	// with an existing identical keyword, or with a defined terminal
+	// whose whole pattern is the same literal
+	constexpr int keyword_sym(int str_node, bool ci) noexcept {
+		const int off = nodes[str_node].a;
+		const int len = nodes[str_node].b;
+		const std::string_view content = pool_view(off, len);
+		for (int i = 0; i < sym_count; ++i) {
+			if (!syms[i].terminal) { continue; }
+			if (syms[i].keyword && syms[i].ci == ci && pool_view(syms[i].lit_off, syms[i].lit_len) == content) {
+				return i;
+			}
+			// a user terminal defined as exactly this literal
+			if (syms[i].defined && !syms[i].keyword && syms[i].pattern >= 0) {
+				int p = syms[i].pattern;
+				bool pci = false;
+				if (nodes[p].kind == pk::ci && nodes[p].child >= 0 && nodes[nodes[p].child].sib < 0) {
+					pci = true;
+					p = nodes[p].child;
+				}
+				// terminal bodies are seq-rooted; unwrap single-child seqs
+				while (nodes[p].kind == pk::seq && nodes[p].child >= 0 && nodes[nodes[p].child].sib < 0) {
+					p = nodes[p].child;
+					if (nodes[p].kind == pk::ci && nodes[p].child >= 0) {
+						pci = true;
+						p = nodes[p].child;
+					}
+				}
+				if (nodes[p].kind == pk::str && pci == ci && pool_view(nodes[p].a, nodes[p].b) == content) {
+					return i;
+				}
+			}
+		}
+		// name it like lark does: IF for word literals, PLUS for + ...
+		char name[64]{};
+		int nlen = 0;
+		bool wordy = !content.empty();
+		for (const char c : content) {
+			const bool w = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+			if (!w) { wordy = false; }
+		}
+		if (wordy && content.size() < 32 && !(content[0] >= '0' && content[0] <= '9')) {
+			for (const char c : content) {
+				name[nlen++] = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 32) : c;
+			}
+		} else if (!content.empty() && content.size() * 12 < 60) {
+			bool all_punct = true;
+			for (const char c : content) {
+				if (punct_name(c).empty()) { all_punct = false; }
+			}
+			if (all_punct) {
+				for (const char c : content) {
+					if (nlen > 0) { name[nlen++] = '_'; }
+					for (const char pc : punct_name(c)) { name[nlen++] = pc; }
+				}
+			}
+		}
+		if (nlen == 0) {
+			return finish_keyword(new_anon_pattern(str_node), str_node, ci);
+		}
+		// collision with an existing symbol name gets the anon treatment
+		for (int i = 0; i < sym_count; ++i) {
+			if (syms[i].terminal && name_of(i) == std::string_view{name, static_cast<size_t>(nlen)}) {
+				return finish_keyword(new_anon_pattern(str_node), str_node, ci);
+			}
+		}
+		const int s = intern(std::string_view{name, static_cast<size_t>(nlen)}, true);
+		syms[s].defined = true;
+		syms[s].pattern = ci ? wrap_ci(str_node) : str_node;
+		return finish_keyword(s, str_node, ci);
+	}
+
+	constexpr int wrap_ci(int node) noexcept {
+		const int w = add(pk::ci);
+		if (ok) { nodes[w].child = node; }
+		return w;
+	}
+
+	constexpr int finish_keyword(int s, int str_node, bool ci) noexcept {
+		syms[s].keyword = true;
+		syms[s].ci = ci;
+		syms[s].lit_off = nodes[str_node].a;
+		syms[s].lit_len = nodes[str_node].b;
+		if (syms[s].anon) { syms[s].pattern = ci ? wrap_ci(str_node) : str_node; }
+		return s;
+	}
+
+	// does this subtree contain a rule reference?
+	constexpr bool has_rref(int node, int depth = 0) const noexcept {
+		if (node < 0 || depth > lim::max_depth) { return false; }
+		if (nodes[node].kind == pk::rref) { return true; }
+		for (int c = nodes[node].child; c >= 0; c = nodes[c].sib) {
+			if (has_rref(c, depth + 1)) { return true; }
+		}
+		return false;
+	}
+
+	// lower one expression node into a symbol sequence
+	constexpr void lower_into(rhs_buf & out, int node, int depth) noexcept {
+		if (!ok) { return; }
+		if (depth > lim::max_depth) {
+			fail("ctlark: rule body too deeply nested");
+			return;
+		}
+		const cnode & n = nodes[node];
+		switch (n.kind) {
+			case pk::seq:
+				for (int c = n.child; c >= 0; c = nodes[c].sib) { lower_into(out, c, depth + 1); }
+				return;
+			case pk::rref:
+			case pk::tref:
+				buf_push(out, n.a);
+				return;
+			case pk::str:
+				buf_push(out, keyword_sym(node, false));
+				return;
+			case pk::ci:
+				if (n.child >= 0 && nodes[n.child].kind == pk::str) {
+					buf_push(out, keyword_sym(n.child, true));
+				} else {
+					buf_push(out, new_anon_pattern(node));
+				}
+				return;
+			case pk::rx:
+			case pk::dotall:
+			case pk::range:
+			case pk::any:
+			case pk::chr:
+			case pk::cls:
+			case pk::cw:
+			case pk::cd:
+			case pk::cs:
+			case pk::cnw:
+			case pk::cnd:
+			case pk::cns:
+				buf_push(out, new_anon_pattern(node));
+				return;
+			case pk::alt: {
+				const int h = new_helper();
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					rhs_buf t{};
+					lower_into(t, c, depth + 1);
+					add_prod(h, t, -1, 0);
+				}
+				buf_push(out, h);
+				return;
+			}
+			case pk::star: {
+				const int h = new_helper();
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				rhs_buf rec{};
+				buf_push(rec, h);
+				for (int i = 0; i < one.len; ++i) { buf_push(rec, one.ids[i]); }
+				add_prod(h, rec, -1, 0);
+				const rhs_buf empty{};
+				add_prod(h, empty, -1, 0);
+				buf_push(out, h);
+				return;
+			}
+			case pk::plus: {
+				const int h = new_helper();
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				rhs_buf rec{};
+				buf_push(rec, h);
+				for (int i = 0; i < one.len; ++i) { buf_push(rec, one.ids[i]); }
+				add_prod(h, rec, -1, 0);
+				add_prod(h, one, -1, 0);
+				buf_push(out, h);
+				return;
+			}
+			case pk::opt: {
+				const int h = new_helper();
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				add_prod(h, one, -1, 0);
+				const rhs_buf empty{};
+				add_prod(h, empty, -1, 0);
+				buf_push(out, h);
+				return;
+			}
+			case pk::rep: {
+				const int lo = n.a;
+				const int hi = n.b;
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				for (int k = 0; k < lo; ++k) {
+					for (int i = 0; i < one.len; ++i) { buf_push(out, one.ids[i]); }
+				}
+				if (hi < 0) {
+					// open repetition: a star helper
+					const int h = new_helper();
+					rhs_buf rec{};
+					buf_push(rec, h);
+					for (int i = 0; i < one.len; ++i) { buf_push(rec, one.ids[i]); }
+					add_prod(h, rec, -1, 0);
+					const rhs_buf empty{};
+					add_prod(h, empty, -1, 0);
+					buf_push(out, h);
+				} else if (hi > lo) {
+					const int h = new_helper();
+					add_prod(h, one, -1, 0);
+					const rhs_buf empty{};
+					add_prod(h, empty, -1, 0);
+					for (int k = lo; k < hi; ++k) { buf_push(out, h); }
+				}
+				return;
+			}
+		}
+		fail("ctlark: unexpected node in a rule body");
+	}
+
+	// --- %ignore resolution
+
+	constexpr void resolve_ignores() noexcept {
+		for (int i = 0; i < ignore_count && ok; ++i) {
+			int root = ignore_roots[i];
+			// unwrap single-child seqs
+			while (nodes[root].kind == pk::seq && nodes[root].child >= 0 && nodes[nodes[root].child].sib < 0) {
+				root = nodes[root].child;
+			}
+			if (nodes[root].kind == pk::tref) {
+				syms[nodes[root].a].ignored = true;
+				continue;
+			}
+			if (has_rref(root)) {
+				fail("ctlark: %ignore must be a terminal pattern");
+				return;
+			}
+			if (nodes[root].kind == pk::str) {
+				syms[keyword_sym(root, false)].ignored = true;
+			} else if (nodes[root].kind == pk::ci && nodes[root].child >= 0 && nodes[nodes[root].child].kind == pk::str) {
+				syms[keyword_sym(nodes[root].child, true)].ignored = true;
+			} else {
+				syms[new_anon_pattern(root)].ignored = true;
+			}
+		}
+	}
+
+	// --- NFA construction
+
+	constexpr int new_state() noexcept {
+		if (state_count >= lim::states) {
+			fail("ctlark: terminal patterns too large (states)");
+			return 0;
+		}
+		state_first_edge[state_count] = -1;
+		return state_count++;
+	}
+	constexpr void add_edge(int from, int to, bool eps, mask256 mask = {}) noexcept {
+		if (edge_count >= lim::edges) {
+			fail("ctlark: terminal patterns too large (edges)");
+			return;
+		}
+		edges[edge_count] = cedge{to, eps, mask, state_first_edge[from]};
+		state_first_edge[from] = edge_count++;
+	}
+
+	constexpr mask256 member_mask(int node, bool ci) const noexcept {
+		mask256 m{};
+		const cnode & n = nodes[node];
+		switch (n.kind) {
+			case pk::chr: m.set(n.a); break;
+			case pk::range: m.set_range(n.a, n.b); break;
+			case pk::cw: m = mask_word(); break;
+			case pk::cd: m = mask_digit(); break;
+			case pk::cs: m = mask_space(); break;
+			case pk::cnw: m = mask_not(mask_word()); break;
+			case pk::cnd: m = mask_not(mask_digit()); break;
+			case pk::cns: m = mask_not(mask_space()); break;
+			default: break;
+		}
+		if (ci) { m.ci_close(); }
+		return m;
+	}
+
+	constexpr nfa_frag char_frag(mask256 m) noexcept {
+		const int in = new_state();
+		const int out = new_state();
+		add_edge(in, out, false, m);
+		return nfa_frag{in, out};
+	}
+
+	constexpr nfa_frag emit_nfa(int node, bool ci, bool dot, int depth) noexcept {
+		if (!ok) { return nfa_frag{0, 0}; }
+		if (depth > lim::max_depth) {
+			fail("ctlark: terminal pattern too deep (recursive terminals are not supported)");
+			return nfa_frag{0, 0};
+		}
+		const cnode & n = nodes[node];
+		switch (n.kind) {
+			case pk::seq: {
+				nfa_frag f{new_state(), -1};
+				f.out = f.in;
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					const nfa_frag g = emit_nfa(c, ci, dot, depth + 1);
+					add_edge(f.out, g.in, true);
+					f.out = g.out;
+				}
+				return f;
+			}
+			case pk::alt: {
+				const int in = new_state();
+				const int out = new_state();
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					const nfa_frag g = emit_nfa(c, ci, dot, depth + 1);
+					add_edge(in, g.in, true);
+					add_edge(g.out, out, true);
+				}
+				return nfa_frag{in, out};
+			}
+			case pk::star: {
+				const int in = new_state();
+				const int out = new_state();
+				const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+				add_edge(in, g.in, true);
+				add_edge(in, out, true);
+				add_edge(g.out, g.in, true);
+				add_edge(g.out, out, true);
+				return nfa_frag{in, out};
+			}
+			case pk::plus: {
+				const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+				add_edge(g.out, g.in, true);
+				return g;
+			}
+			case pk::opt: {
+				const int in = new_state();
+				const int out = new_state();
+				const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+				add_edge(in, g.in, true);
+				add_edge(in, out, true);
+				add_edge(g.out, out, true);
+				return nfa_frag{in, out};
+			}
+			case pk::rep: {
+				const int lo = n.a;
+				const int hi = n.b;
+				nfa_frag f{new_state(), -1};
+				f.out = f.in;
+				for (int k = 0; k < lo; ++k) {
+					const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+					add_edge(f.out, g.in, true);
+					f.out = g.out;
+				}
+				if (hi < 0) {
+					const int in2 = new_state();
+					const int out2 = new_state();
+					const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+					add_edge(f.out, in2, true);
+					add_edge(in2, g.in, true);
+					add_edge(in2, out2, true);
+					add_edge(g.out, g.in, true);
+					add_edge(g.out, out2, true);
+					f.out = out2;
+				} else {
+					for (int k = lo; k < hi; ++k) {
+						const int in2 = new_state();
+						const int out2 = new_state();
+						const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+						add_edge(f.out, in2, true);
+						add_edge(in2, g.in, true);
+						add_edge(in2, out2, true);
+						add_edge(g.out, out2, true);
+						f.out = out2;
+					}
+				}
+				return f;
+			}
+			case pk::chr:
+			case pk::range:
+			case pk::cw:
+			case pk::cd:
+			case pk::cs:
+			case pk::cnw:
+			case pk::cnd:
+			case pk::cns:
+				return char_frag(member_mask(node, ci));
+			case pk::any: {
+				mask256 m{};
+				m.invert();
+				if (!dot) {
+					mask256 nl{};
+					nl.set(0x0A);
+					nl.invert();
+					for (int i = 0; i < 4; ++i) { m.w[i] &= nl.w[i]; }
+				}
+				return char_frag(m);
+			}
+			case pk::str: {
+				nfa_frag f{new_state(), -1};
+				f.out = f.in;
+				const std::string_view s = pool_view(n.a, n.b);
+				for (const char c : s) {
+					mask256 m{};
+					m.set(static_cast<unsigned char>(c));
+					if (ci) { m.ci_close(); }
+					const int to = new_state();
+					add_edge(f.out, to, false, m);
+					f.out = to;
+				}
+				return f;
+			}
+			case pk::cls: {
+				mask256 m{};
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					m.merge(member_mask(c, false));
+				}
+				// case closure applies to the MEMBERS, then negation
+				// complements the closed set: [^a]i excludes both a
+				// and A (closing after inverting would instead ADD the
+				// flipped cases to the matches)
+				if (ci) { m.ci_close(); }
+				if (n.a) { m.invert(); }
+				return char_frag(m);
+			}
+			case pk::ci:
+				return emit_nfa(n.child, true, dot, depth + 1);
+			case pk::dotall:
+				return emit_nfa(n.child, ci, true, depth + 1);
+			case pk::rx:
+				return emit_nfa(n.child, ci, dot, depth + 1);
+			case pk::tref: {
+				const int t = n.a;
+				if (syms[t].pattern < 0) {
+					fail("ctlark: reference to an undefined terminal", name_of(t));
+					return nfa_frag{0, 0};
+				}
+				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
+			}
+			case pk::rref:
+				fail("ctlark: rule reference inside a terminal");
+				return nfa_frag{0, 0};
+		}
+		fail("ctlark: unexpected node in a terminal pattern");
+		return nfa_frag{0, 0};
+	}
+
+	constexpr void build_term_nfa(int s) noexcept {
+		if (!ok || syms[s].pattern < 0) { return; }
+		const nfa_frag f = emit_nfa(syms[s].pattern, false, false, 0);
+		syms[s].nfa_start = f.in;
+		syms[s].nfa_accept = f.out;
+	}
+
+	// --- checks and closures
+
+	constexpr void validate() noexcept {
+		for (int i = 0; i < sym_count && ok; ++i) {
+			if (syms[i].terminal) {
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
+			} else {
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
+			}
+		}
+	}
+
+	constexpr void compute_nullable() noexcept {
+		bool changed = true;
+		while (changed) {
+			changed = false;
+			for (int p = 0; p < prod_count; ++p) {
+				if (nullable[prods[p].lhs]) { continue; }
+				bool all = true;
+				for (int i = 0; i < prods[p].rhs_len; ++i) {
+					const int s = rhs_pool[prods[p].rhs_off + i];
+					if (syms[s].terminal || !nullable[s]) {
+						all = false;
+						break;
+					}
+				}
+				if (all) {
+					nullable[prods[p].lhs] = true;
+					changed = true;
+				}
+			}
+		}
+	}
+
+	constexpr int find_rule(std::string_view name) const noexcept {
+		for (int i = 0; i < sym_count; ++i) {
+			if (!syms[i].terminal && name_of(i) == name) { return i; }
+		}
+		return -1;
+	}
+
+	// --- the driver
+
+	constexpr void finish() noexcept {
+		if (!ok) { return; }
+		resolve_ignores();
+		const int n_alts = alt_count; // helpers do not add alts
+		for (int i = 0; i < n_alts && ok; ++i) {
+			rhs_buf b{};
+			lower_into(b, alts[i].root, 0);
+			add_prod(alts[i].sym, b, alts[i].alias_off, alts[i].alias_len);
+		}
+		for (int s = 0; s < sym_count && ok; ++s) {
+			if (syms[s].terminal) { build_term_nfa(s); }
+		}
+		validate();
+		compute_nullable();
+	}
+
+	// should this terminal's tokens be dropped from trees by default?
+	constexpr bool filtered(int s) const noexcept {
+		return syms[s].keyword || syms[s].anon
+		    || (syms[s].name_len > 0 && pool[syms[s].name_off] == '_');
+	}
+};
+
+// build the tables from a type-level grammar AST
+template <typename Ast, size_t N> constexpr auto compile_tables() noexcept {
+	grammar_tables<N> g{};
+	Ast::collect(g);
+	g.finish();
+	return g;
+}
+
+} // namespace ctlark::detail
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// The compile-time parsing pipeline over the lowered grammar tables:
+//
+//   1. lexer: all terminal NFAs simulated together, longest match wins
+//      (ties: explicit priority, then literals over patterns, then
+//      definition order); %ignore'd terminals are dropped
+//   2. Earley over the token stream - handles every context-free
+//      grammar, including left recursion and ambiguity, with the
+//      Aycock-Horspool nullable fix
+//   3. derivation extraction with lark's tree shaping: helper rules
+//      from desugaring and _rules splice, ?rules inline when they have
+//      a single child, anonymous/keyword/_TERMINAL tokens are filtered
+//      (kept under !rules), -> aliases rename
+//
+// The result is a flat constexpr node array that lift.hpp raises into
+// Tree/Token types. Ambiguous derivations are resolved
+// deterministically: first-listed alternative, then longest-first
+// splits.
+
+namespace ctlark::detail {
+
+enum class perr : unsigned char {
+	none,
+	lex,       // no terminal matches at err_pos
+	parse,     // the token stream does not derive from the start rule
+	overflow,  // an internal pool was exhausted
+	depth      // derivation recursion limit (cyclic nullable rules)
+};
+
+struct eitem {
+	int prod;
+	int dot;
+	int origin;
+};
+
+// one node of the extracted parse tree; names and values are spans
+// into the grammar's string pool and the input, respectively
+struct rnode {
+	bool is_token;
+	int name_off;
+	int name_len;
+	int val_off;    // tokens: value span in the input
+	int val_len;
+	int child_off;  // trees: children in parse_result::children
+	int child_count;
+};
+
+// how many expected terminals a failure records (the true count is
+// kept separately so a diagnostic can say "... and N more")
+inline constexpr int expected_cap = 12;
+
+template <size_t M> struct parse_result {
+	static constexpr int node_cap = static_cast<int>(8 * (M + 2) + 128);
+	static constexpr int child_cap = static_cast<int>(8 * (M + 2) + 128);
+
+	bool ok = false;
+	perr err = perr::none;
+	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	rnode nodes[static_cast<size_t>(node_cap)]{};
+	int node_count = 0;
+	int children[static_cast<size_t>(child_cap)]{};
+	int child_count = 0;
+	int root = -1;
+};
+
+// --- the contextual lexer + Earley pipeline
+//
+// Lexing is interleaved with parsing, like lark's contextual lexers:
+// after an Earley set is closed, only the terminals some item expects
+// (plus the %ignore set) are candidates at the current position. That
+// is what lets keyword-vs-identifier and XML-style tag-vs-text
+// languages tokenize: "true" lexes as an unquoted key where a key is
+// expected and as the keyword where a value is.
+
+struct lex_token {
+	int sym;
+	int off;
+	int len;
+};
+
+// the number of dotted positions, an upper bound on distinct
+// (prod, dot) pairs per set
+template <typename GT> constexpr int dotted_positions(const GT & g) noexcept {
+	int d = 0;
+	for (int p = 0; p < g.prod_count; ++p) { d += g.prods[p].rhs_len + 1; }
+	return d;
+}
+
+template <typename GT, int ItemCap, int SetCap> struct chart {
+	eitem items[static_cast<size_t>(ItemCap)]{};
+	int item_count = 0;
+	int set_off[static_cast<size_t>(SetCap)]{};
+	int set_count = 0;
+	bool overflow = false;
+
+	constexpr bool contains(int from, int prod, int dot, int origin) const noexcept {
+		for (int i = from; i < item_count; ++i) {
+			if (items[i].prod == prod && items[i].dot == dot && items[i].origin == origin) { return true; }
+		}
+		return false;
+	}
+	constexpr void push(int set_start, int prod, int dot, int origin) noexcept {
+		if (contains(set_start, prod, dot, origin)) { return; }
+		if (item_count >= ItemCap) {
+			overflow = true;
+			return;
+		}
+		items[item_count++] = eitem{prod, dot, origin};
+	}
+};
+
+template <typename GT, size_t M> struct pipeline_result {
+	lex_token toks[M + 1]{};
+	int count = 0;
+	bool ok = false;
+	perr err = perr::none;
+	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	// keep the terminals some Earley item expected at the failure point
+	constexpr void record_expected(const bool * exp, int sym_count) noexcept {
+		for (int t = 0; t < sym_count; ++t) {
+			if (!exp[t]) { continue; }
+			if (expected_count < expected_cap) { expected[expected_count++] = t; }
+			++expected_total;
+		}
+	}
+};
+
+// close set i: run predictions and completions to a fixpoint
+template <typename GT, int ItemCap, int SetCap>
+constexpr void close_set(const GT & g, chart<GT, ItemCap, SetCap> & ch, int i) noexcept {
+	const int set_start = ch.set_off[i];
+	for (int ix = set_start; ix < ch.item_count && !ch.overflow; ++ix) {
+		const eitem it = ch.items[ix];
+		const cprod & pr = g.prods[it.prod];
+		if (it.dot < pr.rhs_len) {
+			const int nxt_sym = g.rhs_pool[pr.rhs_off + it.dot];
+			if (!g.syms[nxt_sym].terminal) {
+				// predict
+				for (int p = 0; p < g.prod_count; ++p) {
+					if (g.prods[p].lhs == nxt_sym) { ch.push(set_start, p, 0, i); }
+				}
+				// Aycock-Horspool: nullable nonterminals also advance
+				if (g.nullable[nxt_sym]) { ch.push(set_start, it.prod, it.dot + 1, it.origin); }
+			}
+		} else {
+			// complete
+			const int lhs = pr.lhs;
+			const int parent_end = it.origin == i ? ch.item_count : ch.set_off[it.origin + 1];
+			for (int j = ch.set_off[it.origin]; j < parent_end; ++j) {
+				const eitem parent = ch.items[j];
+				const cprod & ppr = g.prods[parent.prod];
+				if (parent.dot < ppr.rhs_len && g.rhs_pool[ppr.rhs_off + parent.dot] == lhs) {
+					ch.push(set_start, parent.prod, parent.dot + 1, parent.origin);
+				}
+			}
+		}
+	}
+}
+
+// is the start rule completed over the whole token span?
+template <typename GT, int ItemCap, int SetCap>
+constexpr bool accepted(const GT & g, int start_sym, const chart<GT, ItemCap, SetCap> & ch, int i) noexcept {
+	for (int ix = ch.set_off[i]; ix < ch.item_count; ++ix) {
+		const eitem it = ch.items[ix];
+		if (g.prods[it.prod].lhs == start_sym && it.origin == 0 && it.dot == g.prods[it.prod].rhs_len) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// a tracer that traces nothing: every trace call is guarded by
+// `if constexpr (Tracer::enabled)`, so the disabled form costs zero
+// constexpr steps (debug.hpp provides the recording trace_log)
+struct null_tracer {
+	static constexpr bool enabled = false;
+};
+
+// the interleaved pipeline: close a set, lex among expected terminals,
+// scan, repeat
+template <typename GT, size_t M, int ItemCap, int SetCap, typename Tracer = null_tracer>
+constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::string_view in,
+                                              chart<GT, ItemCap, SetCap> & ch, Tracer * tr = nullptr) noexcept {
+	pipeline_result<GT, M> r{};
+	bool expected[static_cast<size_t>(GT::lim::syms)]{};
+	bool cur[static_cast<size_t>(GT::lim::states)]{};
+	bool nxt[static_cast<size_t>(GT::lim::states)]{};
+	int accept_len[static_cast<size_t>(GT::lim::syms)]{};
+
+	ch.set_off[0] = 0;
+	for (int p = 0; p < g.prod_count; ++p) {
+		if (g.prods[p].lhs == start_sym) { ch.push(0, p, 0, 0); }
+	}
+
+	size_t pos = 0;
+	int i = 0;
+	while (true) {
+		close_set(g, ch, i);
+		ch.set_off[i + 1] = ch.item_count;
+		ch.set_count = i + 2;
+		if constexpr (Tracer::enabled) {
+			tr->event("earley: set closed (set, items)", {}, i, ch.set_off[i + 1] - ch.set_off[i]);
+		}
+		if (ch.overflow) {
+			if constexpr (Tracer::enabled) { tr->event("earley: chart overflow", {}, i); }
+			r.err = perr::overflow;
+			return r;
+		}
+
+		// which terminals does some item expect here?
+		for (int t = 0; t < g.sym_count; ++t) { expected[t] = false; }
+		for (int ix = ch.set_off[i]; ix < ch.set_off[i + 1]; ++ix) {
+			const eitem it = ch.items[ix];
+			const cprod & pr = g.prods[it.prod];
+			if (it.dot < pr.rhs_len) {
+				const int nxt_sym = g.rhs_pool[pr.rhs_off + it.dot];
+				if (g.syms[nxt_sym].terminal) { expected[nxt_sym] = true; }
+			}
+		}
+
+		// lex: expected terminals plus the ignored ones; skips loop here
+		int winner = -1;
+		while (pos < in.size()) {
+			for (int s = 0; s < g.state_count; ++s) { cur[s] = false; }
+			for (int t = 0; t < g.sym_count; ++t) {
+				accept_len[t] = -1;
+				if (g.syms[t].terminal && g.syms[t].nfa_start >= 0 && (expected[t] || g.syms[t].ignored)) {
+					cur[g.syms[t].nfa_start] = true;
+				}
+			}
+			int len = 0;
+			bool alive = true;
+			while (alive) {
+				bool grew = true;
+				while (grew) {
+					grew = false;
+					for (int s = 0; s < g.state_count; ++s) {
+						if (!cur[s]) { continue; }
+						for (int e = g.state_first_edge[s]; e >= 0; e = g.edges[e].next) {
+							if (g.edges[e].eps && !cur[g.edges[e].to]) {
+								cur[g.edges[e].to] = true;
+								grew = true;
+							}
+						}
+					}
+				}
+				if (len > 0) {
+					for (int t = 0; t < g.sym_count; ++t) {
+						if (g.syms[t].terminal && g.syms[t].nfa_accept >= 0 && (expected[t] || g.syms[t].ignored)
+						    && cur[g.syms[t].nfa_accept]) {
+							accept_len[t] = len;
+						}
+					}
+				}
+				if (pos + static_cast<size_t>(len) >= in.size()) { break; }
+				const int c = static_cast<unsigned char>(in[pos + static_cast<size_t>(len)]);
+				bool any = false;
+				for (int s = 0; s < g.state_count; ++s) { nxt[s] = false; }
+				for (int s = 0; s < g.state_count; ++s) {
+					if (!cur[s]) { continue; }
+					for (int e = g.state_first_edge[s]; e >= 0; e = g.edges[e].next) {
+						if (!g.edges[e].eps && g.edges[e].mask.get(c)) {
+							nxt[g.edges[e].to] = true;
+							any = true;
+						}
+					}
+				}
+				if (!any) {
+					alive = false;
+				} else {
+					for (int s = 0; s < g.state_count; ++s) { cur[s] = nxt[s]; }
+					++len;
+				}
+			}
+			// longest, then priority, then literal over pattern, then
+			// definition order; expected beats ignored-only on a tie
+			int best = -1;
+			for (int t = 0; t < g.sym_count; ++t) {
+				if (accept_len[t] <= 0) { continue; }
+				if (best < 0) {
+					best = t;
+					continue;
+				}
+				if (accept_len[t] != accept_len[best]) {
+					if (accept_len[t] > accept_len[best]) { best = t; }
+					continue;
+				}
+				if (expected[t] != expected[best]) {
+					if (expected[t]) { best = t; }
+					continue;
+				}
+				if (g.syms[t].prio != g.syms[best].prio) {
+					if (g.syms[t].prio > g.syms[best].prio) { best = t; }
+					continue;
+				}
+				const bool t_lit = g.syms[t].keyword;
+				const bool b_lit = g.syms[best].keyword;
+				if (t_lit != b_lit) {
+					if (t_lit) { best = t; }
+					continue;
+				}
+			}
+			if (best < 0) {
+				if constexpr (Tracer::enabled) { tr->event("lex: no terminal matches (offset)", {}, static_cast<long>(pos)); }
+				r.err = perr::lex;
+				r.err_pos = static_cast<int>(pos);
+				r.record_expected(expected, g.sym_count);
+				return r;
+			}
+			if (expected[best]) {
+				winner = best;
+				break;
+			}
+			// ignored: skip and lex again in the same set
+			if constexpr (Tracer::enabled) {
+				tr->event("lex: skip ignored (offset, length)", g.name_of(best), static_cast<long>(pos), accept_len[best]);
+			}
+			pos += static_cast<size_t>(accept_len[best]);
+		}
+
+		if (winner < 0) {
+			// input exhausted (possibly after trailing ignored tokens)
+			if (pos >= in.size() && accepted(g, start_sym, ch, i)) {
+				if constexpr (Tracer::enabled) { tr->event("earley: accepted (tokens)", {}, i); }
+				r.ok = true;
+				r.count = i;
+				return r;
+			}
+			if constexpr (Tracer::enabled) { tr->event("earley: rejected at end of tokens (offset)", {}, static_cast<long>(pos)); }
+			r.err = perr::parse;
+			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
+			return r;
+		}
+
+		// scan: advance every item expecting the winner into set i+1
+		if (r.count > static_cast<int>(M)) {
+			r.err = perr::overflow;
+			r.err_pos = static_cast<int>(pos);
+			return r;
+		}
+		if constexpr (Tracer::enabled) {
+			tr->event("lex: token (offset, length)", g.name_of(winner), static_cast<long>(pos), accept_len[winner]);
+		}
+		r.toks[r.count++] = lex_token{winner, static_cast<int>(pos), accept_len[winner]};
+		const int set_start = ch.set_off[i];
+		const int set_end = ch.set_off[i + 1];
+		for (int ix = set_start; ix < set_end; ++ix) {
+			const eitem it = ch.items[ix];
+			const cprod & pr = g.prods[it.prod];
+			if (it.dot < pr.rhs_len && g.rhs_pool[pr.rhs_off + it.dot] == winner) {
+				ch.push(set_end, it.prod, it.dot + 1, it.origin);
+			}
+		}
+		if (ch.item_count == set_end) {
+			// nothing advanced: cannot happen (the winner was expected)
+			r.err = perr::parse;
+			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
+			return r;
+		}
+		pos += static_cast<size_t>(accept_len[winner]);
+		++i;
+		if (i + 2 >= SetCap) {
+			r.err = perr::overflow;
+			return r;
+		}
+	}
+}
+
+// --- derivation extraction
+
+template <typename GT, typename RT, int ItemCap, int SetCap, typename Tracer = null_tracer> struct tree_builder {
+	const GT & g;
+	const chart<GT, ItemCap, SetCap> & ch;
+	const lex_token * toks;
+	int ntoks;
+	std::string_view input;
+	RT & out;
+	Tracer * tr = nullptr;
+	bool failed = false;
+	perr fail_kind = perr::none;
+	int fail_pos = -1; // byte offset of the failure, -1 when unknown
+
+	static constexpr int max_kids = 256;
+	static constexpr int max_depth = 256;
+
+	// the input offset where token index idx starts (input end past it)
+	constexpr int tok_off(int idx) const noexcept {
+		return idx < ntoks ? toks[idx].off : static_cast<int>(input.size());
+	}
+
+	constexpr void fail(perr k) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+		}
+	}
+	constexpr void fail(perr k, int pos) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+			fail_pos = pos;
+		}
+	}
+
+	constexpr bool completed(int prod, int origin, int end) const noexcept {
+		for (int i = ch.set_off[end]; i < ch.set_off[end + 1]; ++i) {
+			if (ch.items[i].prod == prod && ch.items[i].origin == origin
+			    && ch.items[i].dot == g.prods[prod].rhs_len) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	constexpr bool derivable(int sym, int s, int e) const noexcept {
+		for (int p = 0; p < g.prod_count; ++p) {
+			if (g.prods[p].lhs == sym && completed(p, s, e)) { return true; }
+		}
+		return false;
+	}
+
+	// find split points for prod p over token span [s, e): splits[i] is
+	// where rhs symbol i starts; splits[rhs_len] == e
+	constexpr bool find_splits(int p, int s, int e, int * splits, int i, int pos, int depth) noexcept {
+		if (depth > max_depth) {
+			fail(perr::depth, tok_off(pos));
+			return false;
+		}
+		const cprod & pr = g.prods[p];
+		splits[i] = pos;
+		if (i == pr.rhs_len) { return pos == e; }
+		const int sym = g.rhs_pool[pr.rhs_off + i];
+		if (g.syms[sym].terminal) {
+			if (pos < e && toks[pos].sym == sym) {
+				return find_splits(p, s, e, splits, i + 1, pos + 1, depth + 1);
+			}
+			return false;
+		}
+		// nonterminal: try candidate ends, longest first
+		for (int q = e; q >= pos; --q) {
+			if (!derivable(sym, pos, q)) { continue; }
+			if (find_splits(p, s, e, splits, i + 1, q, depth + 1)) { return true; }
+		}
+		return false;
+	}
+
+	constexpr int add_node(rnode n) noexcept {
+		if (out.node_count >= RT::node_cap) {
+			fail(perr::overflow);
+			return -1;
+		}
+		out.nodes[out.node_count] = n;
+		return out.node_count++;
+	}
+
+	constexpr int commit_children(const int * kids, int count) noexcept {
+		if (out.child_count + count > RT::child_cap) {
+			fail(perr::overflow);
+			return -1;
+		}
+		const int off = out.child_count;
+		for (int i = 0; i < count; ++i) { out.children[out.child_count++] = kids[i]; }
+		return off;
+	}
+
+	// derive nonterminal sym over [s, e), appending 0..n node ids into
+	// kids (splicing flattens here); keep_all propagates ! through
+	// helpers
+	constexpr void derive(int sym, int s, int e, bool keep_all, int * kids, int & nkids, int depth) noexcept {
+		if (failed) { return; }
+		if (depth > max_depth) {
+			fail(perr::depth, tok_off(s));
+			return;
+		}
+		// first completed production, in definition order
+		int splits[static_cast<size_t>(GT::lim::max_rhs_len) + 1]{};
+		int chosen = -1;
+		for (int p = 0; p < g.prod_count && chosen < 0; ++p) {
+			if (g.prods[p].lhs != sym) { continue; }
+			if (!completed(p, s, e)) { continue; }
+			if (find_splits(p, s, e, splits, 0, s, depth)) { chosen = p; }
+			if (failed) { return; }
+		}
+		if (chosen < 0) {
+			if constexpr (Tracer::enabled) { tr->event("derive: no completed production (tokens)", g.name_of(sym), s, e); }
+			fail(perr::parse, tok_off(s));
+			return;
+		}
+		if constexpr (Tracer::enabled) { tr->event("derive: production chosen (rule, tokens)", g.name_of(sym), chosen, e - s); }
+		CTLARK_CONSTEXPR_ASSERT(splits[g.prods[chosen].rhs_len] == e, "ctlark internal: derivation splits do not cover the span");
+		const cprod & pr = g.prods[chosen];
+		const csym & sm = g.syms[sym];
+		const bool splice = sm.splice || sm.inlined;
+		const bool own_keep = sm.splice ? keep_all : sm.bang;
+
+		int local[max_kids]{};
+		int nlocal = 0;
+		int * dst = splice ? kids : local;
+		int & ndst = splice ? nkids : nlocal;
+
+		for (int i = 0; i < pr.rhs_len && !failed; ++i) {
+			const int child_sym = g.rhs_pool[pr.rhs_off + i];
+			if (g.syms[child_sym].terminal) {
+				const lex_token & tk = toks[splits[i]];
+				if (!g.filtered(child_sym) || own_keep) {
+					if (ndst >= max_kids) {
+						fail(perr::overflow);
+						return;
+					}
+					const int id = add_node(rnode{true, g.syms[child_sym].name_off, g.syms[child_sym].name_len,
+					                              tk.off, tk.len, 0, 0});
+					if (id < 0) { return; }
+					dst[ndst++] = id;
+				}
+			} else {
+				derive(child_sym, splits[i], splits[i + 1], own_keep, dst, ndst, depth + 1);
+			}
+		}
+		if (failed || splice) { return; }
+
+		// ?rule with a single child collapses to that child, unless the
+		// chosen alternative is aliased (the alias forces a node)
+		if (sm.cond && nlocal == 1 && pr.alias_off < 0) {
+			if (nkids >= max_kids) {
+				fail(perr::overflow);
+				return;
+			}
+			kids[nkids++] = local[0];
+			return;
+		}
+		// tree node: aliased name if the production has one
+		int name_off = sm.name_off;
+		int name_len = sm.name_len;
+		if (pr.alias_off >= 0) {
+			name_off = pr.alias_off;
+			name_len = pr.alias_len;
+		}
+		const int coff = commit_children(local, nlocal);
+		if (coff < 0) { return; }
+		const int id = add_node(rnode{false, name_off, name_len, 0, 0, coff, nlocal});
+		if (id < 0) { return; }
+		if (nkids >= max_kids) {
+			fail(perr::overflow);
+			return;
+		}
+		kids[nkids++] = id;
+	}
+};
+
+// --- the whole pipeline
+
+template <const auto & G, const auto & In, int StartSym, typename Tracer = null_tracer>
+constexpr auto run_parse_traced(Tracer * tr = nullptr) noexcept {
+	constexpr size_t M = In.size();
+	using GT = std::remove_cv_t<std::remove_reference_t<decltype(G)>>;
+	parse_result<M> r{};
+
+	// the input is a ctll::fixed_string (char32_t units holding bytes)
+	char buf[M + 1]{};
+	for (size_t i = 0; i < M; ++i) { buf[i] = static_cast<char>(In[i]); }
+	const std::string_view in{buf, M};
+
+	if (!G.ok) {
+		r.err = perr::parse;
+		return r;
+	}
+
+	constexpr int item_cap = (dotted_positions(G) + 16) * (static_cast<int>(M) + 2) * 2;
+	constexpr int set_cap = static_cast<int>(M) + 3;
+	chart<GT, item_cap, set_cap> ch{};
+	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch, tr);
+	if (!pipe.ok) {
+		r.err = pipe.err;
+		r.err_pos = pipe.err_pos;
+		r.expected_count = pipe.expected_count;
+		r.expected_total = pipe.expected_total;
+		for (int k = 0; k < pipe.expected_count; ++k) { r.expected[k] = pipe.expected[k]; }
+		return r;
+	}
+
+	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap, Tracer>;
+	TB tb{G, ch, pipe.toks, pipe.count, in, r, tr};
+	int kids[TB::max_kids]{};
+	int nkids = 0;
+	tb.derive(StartSym, 0, pipe.count, false, kids, nkids, 0);
+	if (tb.failed) {
+		r.err = tb.fail_kind;
+		if (tb.fail_pos >= 0) { r.err_pos = tb.fail_pos; }
+		return r;
+	}
+	if (nkids == 1) {
+		r.root = kids[0];
+	} else {
+		// a spliced or empty start: wrap what remains under the start name
+		const int coff = tb.commit_children(kids, nkids);
+		if (tb.failed) {
+			r.err = tb.fail_kind;
+			return r;
+		}
+		r.root = tb.add_node(rnode{false, G.syms[StartSym].name_off, G.syms[StartSym].name_len, 0, 0, coff, nkids});
+		if (tb.failed) {
+			r.err = tb.fail_kind;
+			return r;
+		}
+	}
+	r.ok = true;
+	return r;
+}
+
+template <const auto & G, const auto & In, int StartSym>
+constexpr auto run_parse() noexcept {
+	return run_parse_traced<G, In, StartSym>();
 }
 
 } // namespace ctlark::detail
@@ -23678,6 +31403,9 @@ template <CTLARK_STRING_INPUT grammar_text> struct grammar_def {
 #endif
 	using parser_type = ctll::parser<lark_grammar, text, lark_actions>;
 	static constexpr bool text_ok = parser_type::template correct_with<context<>>;
+	// where the LL(1) grammar-text parse stopped (0 when it succeeded)
+	static constexpr size_t text_error_pos =
+		text_ok ? 0 : parser_type::template output<context<>>::position;
 
 	static constexpr auto make() noexcept {
 		if constexpr (text_ok) {
@@ -23742,20 +31470,142 @@ CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
                       CTLARK_STRING_INPUT start = default_start_rule>
 constexpr bool is_valid = detail::parse_def<grammar, input, start>::result.ok;
 
+// what went wrong, as a value: the error kind, byte offset, line,
+// column and the expected terminals (kind == error_kind::none when the
+// parse succeeded)
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr error_info_t error_info() noexcept {
+	return detail::error_info_of<detail::parse_def<grammar, input, start>>();
+}
+
+// the rendered diagnostic - location, source snippet with a caret, and
+// the expected terminals - as a static string ("" when the parse
+// succeeded):
+//
+//   ctlark: lexical error at line 1, column 7: no expected terminal matches
+//     [1, 2,]
+//           ^
+//   expected: SIGNED_NUMBER, ']', ESCAPED_STRING
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr std::string_view error_message() noexcept {
+	using pd = detail::parse_def<grammar, input, start>;
+	if constexpr (detail::classify<pd>() == error_kind::none) {
+		return std::string_view{};
+	} else {
+		return detail::message_storage<pd>::view;
+	}
+}
+
+// like error_info, for the grammar alone: bad_grammar_text failures
+// carry the line and column IN THE GRAMMAR TEXT where its parse stopped
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar> constexpr error_info_t grammar_error_info() noexcept {
+	using gd = detail::grammar_def<grammar>;
+	error_info_t e{};
+	if constexpr (!gd::text_ok) {
+		e.kind = error_kind::bad_grammar_text;
+		e.position = gd::text_error_pos;
+		const source_position at = locate(detail::grammar_text<gd>::view, e.position);
+		e.line = at.line;
+		e.column = at.column;
+	} else if constexpr (!gd::tables.ok) {
+		e.kind = error_kind::bad_grammar;
+	}
+	return e;
+}
+
+#ifdef CTLARK_VERBOSE_ERRORS
+namespace detail {
+
+// instantiated on a failed parse<>() so the compiler's backtrace shows
+// the error kind, line and column as template arguments
+template <error_kind Kind, size_t Line, size_t Column> struct parse_failed_at {
+	static_assert(Kind == error_kind::none,
+	              "ctlark: the parse failed - the error kind, line and column are the "
+	              "template arguments of parse_failed_at<...> in this diagnostic");
+	static constexpr bool instantiated = true;
+};
+
+#if CTLL_CNTTP_COMPILER_CHECK
+inline constexpr size_t verbose_headline_len = 72;
+
+// a char-array NTTP prints as a readable string literal in compiler
+// backtraces (a fixed_string would print as char32_t code points)
+struct diag_text {
+	char data[verbose_headline_len + 1]{};
+};
+
+// the first line of the rendered error
+template <typename PD> constexpr diag_text verbose_headline() noexcept {
+	diag_text t{};
+	const std::string_view m = message_storage<PD>::view;
+	for (size_t i = 0; i < m.size() && i < verbose_headline_len && m[i] != '\n'; ++i) { t.data[i] = m[i]; }
+	return t;
+}
+
+// the C++20 spelling also carries the headline text itself
+template <diag_text Msg, error_kind Kind, size_t Line, size_t Column> struct parse_failed {
+	static_assert(Kind == error_kind::none,
+	              "ctlark: the parse failed - the message, error kind, line and column are "
+	              "the template arguments of parse_failed<...> in this diagnostic");
+	static constexpr bool instantiated = true;
+};
+#endif
+
+} // namespace detail
+
+// instantiate the failure marker for a (grammar, input, start) so the
+// kind, line, column (and in C++20 the headline) appear in the
+// compiler's backtrace; a no-op when the parse succeeded. Format
+// layers built on ctlark call this from their own parse() gates.
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr bool verbose_report() noexcept {
+	using pd = detail::parse_def<grammar, input, start>;
+	if constexpr (detail::classify<pd>() != error_kind::none) {
+		constexpr error_info_t vei = error_info<grammar, input, start>();
+#if CTLL_CNTTP_COMPILER_CHECK
+		static_assert(detail::parse_failed<detail::verbose_headline<pd>(), vei.kind, vei.line, vei.column>::instantiated);
+#else
+		static_assert(detail::parse_failed_at<vei.kind, vei.line, vei.column>::instantiated);
+#endif
+	}
+	return true;
+}
+#endif
+
 // parse the input into a Tree/Token type; any failure is a compile
-// error with a static_assert naming the stage that failed
+// error with a static_assert naming the stage that failed and the
+// query to run for the details (define CTLARK_VERBOSE_ERRORS to also
+// get the kind, line and column embedded in the compiler's backtrace)
 CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
                       CTLARK_STRING_INPUT start = default_start_rule>
 constexpr auto parse() noexcept {
 	using pd = detail::parse_def<grammar, input, start>;
 	static_assert(pd::def::text_ok,
-	              "ctlark: the grammar text is not valid Lark (see the README for the supported subset)");
+	              "ctlark: the grammar text is not valid Lark - print "
+	              "ctlark::grammar_error_info<grammar>() for the line and column "
+	              "(see the README for the supported subset)");
 	static_assert(!pd::def::text_ok || pd::def::tables.ok,
-	              "ctlark: the grammar is not usable - print ctlark::grammar_error<...>() for the reason");
+	              "ctlark: the grammar is not usable - print ctlark::grammar_error<grammar>() for the reason");
 	static_assert(!pd::def::tables.ok || pd::start_sym >= 0,
 	              "ctlark: the start rule is not defined in the grammar");
-	static_assert(pd::start_sym < 0 || pd::result.ok,
-	              "ctlark: the input does not match the grammar");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::lex,
+	              "ctlark: lexical error - no expected terminal matches the input; print "
+	              "ctlark::error_message<grammar, input>() for the location and the expected terminals");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::parse,
+	              "ctlark: syntax error - the input does not match the grammar; print "
+	              "ctlark::error_message<grammar, input>() for the location and the expected terminals");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::overflow,
+	              "ctlark: an internal pool overflowed - the input is too large for the compiled "
+	              "limits (see the README section on constexpr budgets)");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::depth,
+	              "ctlark: the derivation recursion limit was hit (deeply nested input or "
+	              "cyclic nullable rules)");
+#ifdef CTLARK_VERBOSE_ERRORS
+	(void)verbose_report<grammar, input, start>();
+#endif
 	if constexpr (pd::result.ok) {
 		return typename detail::lift_node<pd::def::tables, pd::in, pd::result, pd::result.root>::type{};
 	} else {
@@ -23781,6 +31631,414 @@ CTLL_EXPORT template <CTLARK_STRING_INPUT grammar_text> struct lark {
 };
 
 } // namespace ctlark
+
+// the debugging toolbox builds on grammar_def/parse_def above
+#ifndef CTLARK__DEBUG__HPP
+#define CTLARK__DEBUG__HPP
+
+// Tools for debugging constexpr parses. Include order matters: this
+// header is included at the END of ctlark.hpp because it builds on the
+// grammar_def/parse_def machinery defined there.
+//
+//   debug::traced_parse<grammar, input>()  - rerun the parse with a
+//       recording trace log. It is a plain constexpr function, so the
+//       SAME call also runs at runtime: call it from main() to step
+//       through the parser under a debugger (or stream the trace live
+//       with CTLARK_DEBUG_STDERR) on exactly the input that fails at
+//       compile time.
+//   debug::parse_runtime<grammar>(text)    - parse a RUNTIME string
+//       against the compile-time tables; iterate on inputs without
+//       recompiling.
+//   debug::dump_tokens<grammar, input>()   - the lexed token stream as
+//       a static string (up to the first error, if any).
+//   debug::dump_grammar<grammar>()         - the lowered terminals and
+//       productions, i.e. what the Earley parser actually runs.
+//   CTLARK_CONSTEXPR_ASSERT (assert.hpp)   - internal invariants that
+//       stop constant evaluation with a readable message; enabled by
+//       defining CTLARK_DEBUG.
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <memory>
+#include <string_view>
+#include <vector>
+#ifdef CTLARK_DEBUG_STDERR
+#include <cstdio>
+#endif
+#endif
+
+namespace ctlark::debug {
+
+namespace detail {
+
+using namespace ctlark::detail;
+
+// runtime-vs-constexpr detection, usable from C++17
+constexpr bool constant_evaluated() noexcept {
+#if defined(__cpp_lib_is_constant_evaluated)
+	return std::is_constant_evaluated();
+#elif defined(__GNUC__) || defined(__clang__)
+	return __builtin_is_constant_evaluated();
+#elif defined(_MSC_VER) && _MSC_VER >= 1925
+	return __builtin_is_constant_evaluated();
+#else
+	return true; // unknown: assume constexpr, never attempt runtime I/O
+#endif
+}
+
+constexpr error_kind kind_from_perr(perr e) noexcept {
+	switch (e) {
+		case perr::lex: return error_kind::lex;
+		case perr::overflow: return error_kind::overflow;
+		case perr::depth: return error_kind::depth;
+		case perr::parse: return error_kind::parse;
+		case perr::none: return error_kind::none;
+	}
+	return error_kind::parse;
+}
+
+// error_info_t built from a finished parse_result (shared by the
+// traced and runtime paths; unlike error_info<>() this also works on
+// results computed at runtime)
+template <typename GT, typename PR>
+constexpr error_info_t info_from_result(const GT & g, const PR & pr, std::string_view in) noexcept {
+	error_info_t e{};
+	if (pr.ok) { return e; }
+	e.kind = kind_from_perr(pr.err);
+	e.position = static_cast<size_t>(pr.err_pos);
+	const source_position at = locate(in, e.position);
+	e.line = at.line;
+	e.column = at.column;
+	e.expected_count = pr.expected_count;
+	e.expected_total = pr.expected_total;
+	for (int i = 0; i < pr.expected_count; ++i) { e.expected[i] = term_display(g, pr.expected[i]); }
+	return e;
+}
+
+} // namespace detail
+
+// --- the trace log: a flat text of one line per parser event
+
+CTLL_EXPORT template <size_t Cap = 4096> struct trace_log {
+	static constexpr bool enabled = true;
+	static constexpr long no_value = -1;
+
+	char buf[Cap]{};
+	size_t len = 0;
+	int events = 0;
+	bool truncated = false;
+
+	constexpr void put(std::string_view s) noexcept {
+		for (const char c : s) {
+			if (len + 1 < Cap) {
+				buf[len++] = c;
+			} else {
+				truncated = true;
+			}
+		}
+	}
+	constexpr void put_num(long v) noexcept {
+		if (v < 0) {
+			put("-");
+			v = -v;
+		}
+		char d[20]{};
+		size_t n = 0;
+		do {
+			d[n++] = static_cast<char>('0' + v % 10);
+			v /= 10;
+		} while (v > 0);
+		while (n > 0) { put(std::string_view{&d[--n], 1}); }
+	}
+	constexpr void event(std::string_view stage, std::string_view what = {},
+	                     long a = no_value, long b = no_value) noexcept {
+		++events;
+		const size_t start = len;
+		put(stage);
+		if (!what.empty()) {
+			put(" ");
+			put(what);
+		}
+		if (a != no_value) {
+			put(" ");
+			put_num(a);
+		}
+		if (b != no_value) {
+			put(" ");
+			put_num(b);
+		}
+		put("\n");
+#ifdef CTLARK_DEBUG_STDERR
+		if (!detail::constant_evaluated()) { std::fwrite(buf + start, 1, len - start, stderr); }
+#else
+		(void)start;
+#endif
+	}
+	constexpr std::string_view view() const noexcept {
+		return std::string_view{buf, len};
+	}
+};
+
+// --- traced_parse: the parse, narrated
+
+CTLL_EXPORT template <size_t Cap> struct traced_result {
+	bool ok = false;
+	error_info_t error{};
+	trace_log<Cap> log{};
+};
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule, size_t Cap = 4096>
+constexpr traced_result<Cap> traced_parse() noexcept {
+	using pd = ctlark::detail::parse_def<grammar, input, start>;
+	traced_result<Cap> r{};
+	if constexpr (!pd::def::text_ok) {
+		r.error.kind = error_kind::bad_grammar_text;
+		r.log.event("grammar: the grammar text is not valid Lark");
+	} else if constexpr (!pd::def::tables.ok) {
+		r.error.kind = error_kind::bad_grammar;
+		r.log.event("grammar: not usable:", ctlark::grammar_error<grammar>());
+	} else if constexpr (pd::start_sym < 0) {
+		r.error.kind = error_kind::no_start_rule;
+		r.log.event("grammar: the start rule is not defined");
+	} else {
+		const auto pr = ctlark::detail::run_parse_traced<pd::def::tables, pd::in, pd::start_sym>(&r.log);
+		r.ok = pr.ok;
+		if (!pr.ok) {
+			// rebuild the input characters locally so this path also
+			// works when the whole call runs at runtime
+			char buf[pd::in.size() + 1]{};
+			for (size_t i = 0; i < pd::in.size(); ++i) { buf[i] = static_cast<char>(pd::in[i]); }
+			r.error = detail::info_from_result(pd::def::tables, pr, std::string_view{buf, pd::in.size()});
+			// the string_views in error.expected point into the static
+			// grammar tables, never into buf, so returning them is fine
+		}
+	}
+	return r;
+}
+
+// --- parse_runtime: runtime input, compile-time grammar
+//
+// Recognition only (lexing + Earley); the tree-shaping stage that
+// parse<>() adds cannot fail on a recognized input except by depth.
+// MaxTokens bounds the token stream; inputs longer than that report
+// overflow. The chart lives on the heap - this is not constexpr, on
+// purpose.
+
+CTLL_EXPORT struct runtime_token {
+	std::string_view name;  // terminal name in the grammar tables
+	std::string_view value; // the matched span of the input
+	size_t offset = 0;
+};
+
+CTLL_EXPORT struct runtime_result {
+	bool ok = false;
+	error_info_t error{};
+	std::vector<runtime_token> tokens{};
+};
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, size_t MaxTokens = 1024>
+runtime_result parse_runtime(std::string_view in, std::string_view start_rule = "start") {
+	using gd = ctlark::detail::grammar_def<grammar>;
+	runtime_result r{};
+	if constexpr (!gd::text_ok) {
+		r.error.kind = error_kind::bad_grammar_text;
+		return r;
+	} else if constexpr (!gd::tables.ok) {
+		r.error.kind = error_kind::bad_grammar;
+		return r;
+	} else {
+		static constexpr auto & g = gd::tables;
+		using GT = std::remove_cv_t<std::remove_reference_t<decltype(g)>>;
+		const int start_sym = g.find_rule(start_rule);
+		if (start_sym < 0) {
+			r.error.kind = error_kind::no_start_rule;
+			return r;
+		}
+		if (in.size() > MaxTokens) {
+			r.error.kind = error_kind::overflow;
+			return r;
+		}
+		constexpr int item_cap =
+			(ctlark::detail::dotted_positions(g) + 16) * (static_cast<int>(MaxTokens) + 2) * 2;
+		constexpr int set_cap = static_cast<int>(MaxTokens) + 3;
+		const auto ch = std::make_unique<ctlark::detail::chart<GT, item_cap, set_cap>>();
+		const auto pipe = std::make_unique<ctlark::detail::pipeline_result<GT, MaxTokens>>(
+			ctlark::detail::run_pipeline<GT, MaxTokens>(g, start_sym, in, *ch));
+		r.ok = pipe->ok;
+		if (!pipe->ok) { r.error = detail::info_from_result(g, *pipe, in); }
+		const int ntoks = pipe->ok ? pipe->count : 0;
+		r.tokens.reserve(static_cast<size_t>(ntoks));
+		for (int i = 0; i < ntoks; ++i) {
+			const auto & tk = pipe->toks[i];
+			r.tokens.push_back(runtime_token{g.name_of(tk.sym),
+			                                 in.substr(static_cast<size_t>(tk.off), static_cast<size_t>(tk.len)),
+			                                 static_cast<size_t>(tk.off)});
+		}
+		return r;
+	}
+}
+
+// --- dump_tokens: the lexed token stream as a static string
+
+namespace detail {
+
+// lex the input without extracting a tree (its own instantiation, so
+// asking for a token dump does not disturb the cached parse)
+template <typename PD> struct lex_def {
+	static constexpr auto & g = PD::def::tables;
+	using GT = std::remove_cv_t<std::remove_reference_t<decltype(g)>>;
+	static constexpr size_t M = PD::in.size();
+
+	static constexpr auto make() noexcept {
+		char buf[M + 1]{};
+		for (size_t i = 0; i < M; ++i) { buf[i] = static_cast<char>(PD::in[i]); }
+		constexpr int item_cap = (dotted_positions(g) + 16) * (static_cast<int>(M) + 2) * 2;
+		constexpr int set_cap = static_cast<int>(M) + 3;
+		chart<GT, item_cap, set_cap> ch{};
+		return run_pipeline<GT, M>(g, PD::start_sym, std::string_view{buf, M}, ch);
+	}
+	static constexpr auto pipe = make();
+};
+
+template <typename PD> struct tokens_storage {
+	template <typename Sink> static constexpr void render(Sink & s) noexcept {
+		const auto & pipe = lex_def<PD>::pipe;
+		const std::string_view in = input_text<PD>::view;
+		const int n = pipe.ok ? pipe.count : lexed_count();
+		for (int i = 0; i < n; ++i) {
+			const auto & tk = pipe.toks[i];
+			s.put(lex_def<PD>::g.name_of(tk.sym));
+			s.put(" '");
+			s.put_escaped(in.substr(static_cast<size_t>(tk.off), static_cast<size_t>(tk.len)));
+			s.put("' @");
+			put_uint(s, static_cast<size_t>(tk.off));
+			s.put("..");
+			put_uint(s, static_cast<size_t>(tk.off + tk.len));
+			s.put("\n");
+		}
+		if (!pipe.ok) {
+			s.put("! ");
+			s.put(to_string(kind_from_perr(pipe.err)));
+			s.put(" at offset ");
+			put_uint(s, static_cast<size_t>(pipe.err_pos));
+			s.put("\n");
+		}
+	}
+	// on failure pipe.count was left mid-stream; it is still the number
+	// of tokens lexed so far
+	static constexpr int lexed_count() noexcept {
+		return lex_def<PD>::pipe.count;
+	}
+
+	static constexpr size_t measure() noexcept {
+		count_sink s{};
+		render(s);
+		return s.at;
+	}
+	static constexpr size_t length = measure();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		render(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr std::string_view dump_tokens() noexcept {
+	using pd = ctlark::detail::parse_def<grammar, input, start>;
+	if constexpr (!pd::def::text_ok || !pd::def::tables.ok) {
+		return ctlark::grammar_error<grammar>();
+	} else if constexpr (pd::start_sym < 0) {
+		return "ctlark: the start rule is not defined in the grammar";
+	} else {
+		return detail::tokens_storage<pd>::view;
+	}
+}
+
+// --- dump_grammar: the lowered terminals and productions
+
+namespace detail {
+
+template <typename GD> struct grammar_storage {
+	template <typename Sink> static constexpr void render(Sink & s) noexcept {
+		const auto & g = GD::tables;
+		for (int t = 0; t < g.sym_count; ++t) {
+			if (!g.syms[t].terminal) { continue; }
+			s.put("terminal ");
+			s.put(g.name_of(t));
+			if (term_is_literal(g, t)) {
+				s.put(" '");
+				s.put_escaped(g.pool_view(g.syms[t].lit_off, g.syms[t].lit_len));
+				s.put("'");
+			}
+			if (g.syms[t].prio != 0) {
+				s.put(" .");
+				const int prio = g.syms[t].prio;
+				if (prio < 0) { s.put("-"); }
+				put_uint(s, static_cast<size_t>(prio < 0 ? -prio : prio));
+			}
+			if (g.syms[t].ignored) { s.put(" %ignore"); }
+			s.put("\n");
+		}
+		for (int p = 0; p < g.prod_count; ++p) {
+			const auto & pr = g.prods[p];
+			s.put(g.name_of(pr.lhs));
+			s.put(":");
+			for (int i = 0; i < pr.rhs_len; ++i) {
+				s.put(" ");
+				s.put(g.name_of(g.rhs_pool[pr.rhs_off + i]));
+			}
+			if (pr.alias_off >= 0) {
+				s.put(" -> ");
+				s.put(g.pool_view(pr.alias_off, pr.alias_len));
+			}
+			s.put("\n");
+		}
+	}
+
+	static constexpr size_t measure() noexcept {
+		count_sink s{};
+		render(s);
+		return s.at;
+	}
+	static constexpr size_t length = measure();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		render(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar> constexpr std::string_view dump_grammar() noexcept {
+	using gd = ctlark::detail::grammar_def<grammar>;
+	if constexpr (!gd::text_ok || !gd::tables.ok) {
+		return ctlark::grammar_error<grammar>();
+	} else {
+		return detail::grammar_storage<gd>::view;
+	}
+}
+
+} // namespace ctlark::debug
+
+#endif
 
 #endif
 
@@ -29368,6 +37626,45 @@ template <typename... Items> struct grammar {
 
 #endif
 
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
+
+#endif
+
 #ifndef CTLARK__COMMON__HPP
 #define CTLARK__COMMON__HPP
 
@@ -29985,7 +38282,7 @@ template <size_t N> struct grammar_tables {
 	using lim = climits<N>;
 
 	bool ok = true;
-	char error[96]{};
+	char error[128]{};
 
 	cnode nodes[static_cast<size_t>(lim::nodes)]{};
 	int node_count = 0;
@@ -30023,6 +38320,20 @@ template <size_t N> struct grammar_tables {
 		ok = false;
 		size_t i = 0;
 		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
 		error[i] = '\0';
 	}
 	constexpr std::string_view error_view() const noexcept {
@@ -30104,7 +38415,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
 		const int s = intern(name, false);
-		if (syms[s].defined) { fail("ctlark: duplicate rule definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
 		syms[s].defined = true;
 		syms[s].bang = bang;
 		syms[s].cond = cond;
@@ -30113,7 +38424,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_term(std::string_view name, int prio) noexcept {
 		const int s = intern(name, true);
-		if (syms[s].defined) { fail("ctlark: duplicate terminal definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
 		syms[s].defined = true;
 		syms[s].prio = prio;
 		return s;
@@ -30160,12 +38471,12 @@ template <size_t N> struct grammar_tables {
 		}
 		const int root = emit_common(segs[1], *this);
 		if (root < 0) {
-			fail("ctlark: %import: not a supported common.* terminal");
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
 			return;
 		}
 		const int s = intern(alias, true);
 		if (syms[s].defined) {
-			fail("ctlark: duplicate terminal definition (%import)");
+			fail("ctlark: duplicate terminal definition (%import)", alias);
 			return;
 		}
 		syms[s].defined = true;
@@ -30658,7 +38969,7 @@ template <size_t N> struct grammar_tables {
 			case pk::tref: {
 				const int t = n.a;
 				if (syms[t].pattern < 0) {
-					fail("ctlark: reference to an undefined terminal");
+					fail("ctlark: reference to an undefined terminal", name_of(t));
 					return nfa_frag{0, 0};
 				}
 				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
@@ -30683,9 +38994,9 @@ template <size_t N> struct grammar_tables {
 	constexpr void validate() noexcept {
 		for (int i = 0; i < sym_count && ok; ++i) {
 			if (syms[i].terminal) {
-				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal"); }
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
 			} else {
-				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule"); }
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
 			}
 		}
 	}
@@ -31084,6 +39395,45 @@ template <typename... Items> struct grammar {
 
 #endif
 
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
+
+#endif
+
 #ifndef CTLARK__COMMON__HPP
 #define CTLARK__COMMON__HPP
 
@@ -31701,7 +40051,7 @@ template <size_t N> struct grammar_tables {
 	using lim = climits<N>;
 
 	bool ok = true;
-	char error[96]{};
+	char error[128]{};
 
 	cnode nodes[static_cast<size_t>(lim::nodes)]{};
 	int node_count = 0;
@@ -31739,6 +40089,20 @@ template <size_t N> struct grammar_tables {
 		ok = false;
 		size_t i = 0;
 		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
 		error[i] = '\0';
 	}
 	constexpr std::string_view error_view() const noexcept {
@@ -31820,7 +40184,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
 		const int s = intern(name, false);
-		if (syms[s].defined) { fail("ctlark: duplicate rule definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
 		syms[s].defined = true;
 		syms[s].bang = bang;
 		syms[s].cond = cond;
@@ -31829,7 +40193,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_term(std::string_view name, int prio) noexcept {
 		const int s = intern(name, true);
-		if (syms[s].defined) { fail("ctlark: duplicate terminal definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
 		syms[s].defined = true;
 		syms[s].prio = prio;
 		return s;
@@ -31876,12 +40240,12 @@ template <size_t N> struct grammar_tables {
 		}
 		const int root = emit_common(segs[1], *this);
 		if (root < 0) {
-			fail("ctlark: %import: not a supported common.* terminal");
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
 			return;
 		}
 		const int s = intern(alias, true);
 		if (syms[s].defined) {
-			fail("ctlark: duplicate terminal definition (%import)");
+			fail("ctlark: duplicate terminal definition (%import)", alias);
 			return;
 		}
 		syms[s].defined = true;
@@ -32374,7 +40738,7 @@ template <size_t N> struct grammar_tables {
 			case pk::tref: {
 				const int t = n.a;
 				if (syms[t].pattern < 0) {
-					fail("ctlark: reference to an undefined terminal");
+					fail("ctlark: reference to an undefined terminal", name_of(t));
 					return nfa_frag{0, 0};
 				}
 				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
@@ -32399,9 +40763,9 @@ template <size_t N> struct grammar_tables {
 	constexpr void validate() noexcept {
 		for (int i = 0; i < sym_count && ok; ++i) {
 			if (syms[i].terminal) {
-				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal"); }
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
 			} else {
-				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule"); }
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
 			}
 		}
 	}
@@ -32523,6 +40887,10 @@ struct rnode {
 	int child_count;
 };
 
+// how many expected terminals a failure records (the true count is
+// kept separately so a diagnostic can say "... and N more")
+inline constexpr int expected_cap = 12;
+
 template <size_t M> struct parse_result {
 	static constexpr int node_cap = static_cast<int>(8 * (M + 2) + 128);
 	static constexpr int child_cap = static_cast<int>(8 * (M + 2) + 128);
@@ -32530,6 +40898,9 @@ template <size_t M> struct parse_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
 
 	rnode nodes[static_cast<size_t>(node_cap)]{};
 	int node_count = 0;
@@ -32590,6 +40961,18 @@ template <typename GT, size_t M> struct pipeline_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	// keep the terminals some Earley item expected at the failure point
+	constexpr void record_expected(const bool * exp, int sym_count) noexcept {
+		for (int t = 0; t < sym_count; ++t) {
+			if (!exp[t]) { continue; }
+			if (expected_count < expected_cap) { expected[expected_count++] = t; }
+			++expected_total;
+		}
+	}
 };
 
 // close set i: run predictions and completions to a fixpoint
@@ -32636,11 +41019,18 @@ constexpr bool accepted(const GT & g, int start_sym, const chart<GT, ItemCap, Se
 	return false;
 }
 
+// a tracer that traces nothing: every trace call is guarded by
+// `if constexpr (Tracer::enabled)`, so the disabled form costs zero
+// constexpr steps (debug.hpp provides the recording trace_log)
+struct null_tracer {
+	static constexpr bool enabled = false;
+};
+
 // the interleaved pipeline: close a set, lex among expected terminals,
 // scan, repeat
-template <typename GT, size_t M, int ItemCap, int SetCap>
+template <typename GT, size_t M, int ItemCap, int SetCap, typename Tracer = null_tracer>
 constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::string_view in,
-                                              chart<GT, ItemCap, SetCap> & ch) noexcept {
+                                              chart<GT, ItemCap, SetCap> & ch, Tracer * tr = nullptr) noexcept {
 	pipeline_result<GT, M> r{};
 	bool expected[static_cast<size_t>(GT::lim::syms)]{};
 	bool cur[static_cast<size_t>(GT::lim::states)]{};
@@ -32658,7 +41048,11 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 		close_set(g, ch, i);
 		ch.set_off[i + 1] = ch.item_count;
 		ch.set_count = i + 2;
+		if constexpr (Tracer::enabled) {
+			tr->event("earley: set closed (set, items)", {}, i, ch.set_off[i + 1] - ch.set_off[i]);
+		}
 		if (ch.overflow) {
+			if constexpr (Tracer::enabled) { tr->event("earley: chart overflow", {}, i); }
 			r.err = perr::overflow;
 			return r;
 		}
@@ -32757,8 +41151,10 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				}
 			}
 			if (best < 0) {
+				if constexpr (Tracer::enabled) { tr->event("lex: no terminal matches (offset)", {}, static_cast<long>(pos)); }
 				r.err = perr::lex;
 				r.err_pos = static_cast<int>(pos);
+				r.record_expected(expected, g.sym_count);
 				return r;
 			}
 			if (expected[best]) {
@@ -32766,18 +41162,24 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				break;
 			}
 			// ignored: skip and lex again in the same set
+			if constexpr (Tracer::enabled) {
+				tr->event("lex: skip ignored (offset, length)", g.name_of(best), static_cast<long>(pos), accept_len[best]);
+			}
 			pos += static_cast<size_t>(accept_len[best]);
 		}
 
 		if (winner < 0) {
 			// input exhausted (possibly after trailing ignored tokens)
 			if (pos >= in.size() && accepted(g, start_sym, ch, i)) {
+				if constexpr (Tracer::enabled) { tr->event("earley: accepted (tokens)", {}, i); }
 				r.ok = true;
 				r.count = i;
 				return r;
 			}
+			if constexpr (Tracer::enabled) { tr->event("earley: rejected at end of tokens (offset)", {}, static_cast<long>(pos)); }
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 
@@ -32786,6 +41188,9 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			r.err = perr::overflow;
 			r.err_pos = static_cast<int>(pos);
 			return r;
+		}
+		if constexpr (Tracer::enabled) {
+			tr->event("lex: token (offset, length)", g.name_of(winner), static_cast<long>(pos), accept_len[winner]);
 		}
 		r.toks[r.count++] = lex_token{winner, static_cast<int>(pos), accept_len[winner]};
 		const int set_start = ch.set_off[i];
@@ -32801,6 +41206,7 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			// nothing advanced: cannot happen (the winner was expected)
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 		pos += static_cast<size_t>(accept_len[winner]);
@@ -32814,23 +41220,37 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 
 // --- derivation extraction
 
-template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder {
+template <typename GT, typename RT, int ItemCap, int SetCap, typename Tracer = null_tracer> struct tree_builder {
 	const GT & g;
 	const chart<GT, ItemCap, SetCap> & ch;
 	const lex_token * toks;
 	int ntoks;
 	std::string_view input;
 	RT & out;
+	Tracer * tr = nullptr;
 	bool failed = false;
 	perr fail_kind = perr::none;
+	int fail_pos = -1; // byte offset of the failure, -1 when unknown
 
 	static constexpr int max_kids = 256;
 	static constexpr int max_depth = 256;
+
+	// the input offset where token index idx starts (input end past it)
+	constexpr int tok_off(int idx) const noexcept {
+		return idx < ntoks ? toks[idx].off : static_cast<int>(input.size());
+	}
 
 	constexpr void fail(perr k) noexcept {
 		if (!failed) {
 			failed = true;
 			fail_kind = k;
+		}
+	}
+	constexpr void fail(perr k, int pos) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+			fail_pos = pos;
 		}
 	}
 
@@ -32855,7 +41275,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	// where rhs symbol i starts; splits[rhs_len] == e
 	constexpr bool find_splits(int p, int s, int e, int * splits, int i, int pos, int depth) noexcept {
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(pos));
 			return false;
 		}
 		const cprod & pr = g.prods[p];
@@ -32901,7 +41321,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	constexpr void derive(int sym, int s, int e, bool keep_all, int * kids, int & nkids, int depth) noexcept {
 		if (failed) { return; }
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(s));
 			return;
 		}
 		// first completed production, in definition order
@@ -32914,9 +41334,12 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 			if (failed) { return; }
 		}
 		if (chosen < 0) {
-			fail(perr::parse);
+			if constexpr (Tracer::enabled) { tr->event("derive: no completed production (tokens)", g.name_of(sym), s, e); }
+			fail(perr::parse, tok_off(s));
 			return;
 		}
+		if constexpr (Tracer::enabled) { tr->event("derive: production chosen (rule, tokens)", g.name_of(sym), chosen, e - s); }
+		CTLARK_CONSTEXPR_ASSERT(splits[g.prods[chosen].rhs_len] == e, "ctlark internal: derivation splits do not cover the span");
 		const cprod & pr = g.prods[chosen];
 		const csym & sm = g.syms[sym];
 		const bool splice = sm.splice || sm.inlined;
@@ -32978,8 +41401,8 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 
 // --- the whole pipeline
 
-template <const auto & G, const auto & In, int StartSym>
-constexpr auto run_parse() noexcept {
+template <const auto & G, const auto & In, int StartSym, typename Tracer = null_tracer>
+constexpr auto run_parse_traced(Tracer * tr = nullptr) noexcept {
 	constexpr size_t M = In.size();
 	using GT = std::remove_cv_t<std::remove_reference_t<decltype(G)>>;
 	parse_result<M> r{};
@@ -32997,20 +41420,24 @@ constexpr auto run_parse() noexcept {
 	constexpr int item_cap = (dotted_positions(G) + 16) * (static_cast<int>(M) + 2) * 2;
 	constexpr int set_cap = static_cast<int>(M) + 3;
 	chart<GT, item_cap, set_cap> ch{};
-	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch);
+	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch, tr);
 	if (!pipe.ok) {
 		r.err = pipe.err;
 		r.err_pos = pipe.err_pos;
+		r.expected_count = pipe.expected_count;
+		r.expected_total = pipe.expected_total;
+		for (int k = 0; k < pipe.expected_count; ++k) { r.expected[k] = pipe.expected[k]; }
 		return r;
 	}
 
-	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap>;
-	TB tb{G, ch, pipe.toks, pipe.count, in, r};
+	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap, Tracer>;
+	TB tb{G, ch, pipe.toks, pipe.count, in, r, tr};
 	int kids[TB::max_kids]{};
 	int nkids = 0;
 	tb.derive(StartSym, 0, pipe.count, false, kids, nkids, 0);
 	if (tb.failed) {
 		r.err = tb.fail_kind;
+		if (tb.fail_pos >= 0) { r.err_pos = tb.fail_pos; }
 		return r;
 	}
 	if (nkids == 1) {
@@ -33030,6 +41457,11 @@ constexpr auto run_parse() noexcept {
 	}
 	r.ok = true;
 	return r;
+}
+
+template <const auto & G, const auto & In, int StartSym>
+constexpr auto run_parse() noexcept {
+	return run_parse_traced<G, In, StartSym>();
 }
 
 } // namespace ctlark::detail
@@ -33505,8 +41937,8 @@ constexpr void for_each_child(tree<Data, Children...>, F && f) {
 
 #endif
 
-#ifndef CTLARK__LIFT__HPP
-#define CTLARK__LIFT__HPP
+#ifndef CTLARK__DIAG__HPP
+#define CTLARK__DIAG__HPP
 
 #ifndef CTLARK__EARLEY__HPP
 #define CTLARK__EARLEY__HPP
@@ -33833,6 +42265,45 @@ template <typename... Items> struct grammar {
 };
 
 } // namespace ctlark::ast
+
+#endif
+
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
 
 #endif
 
@@ -34453,7 +42924,7 @@ template <size_t N> struct grammar_tables {
 	using lim = climits<N>;
 
 	bool ok = true;
-	char error[96]{};
+	char error[128]{};
 
 	cnode nodes[static_cast<size_t>(lim::nodes)]{};
 	int node_count = 0;
@@ -34491,6 +42962,20 @@ template <size_t N> struct grammar_tables {
 		ok = false;
 		size_t i = 0;
 		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
 		error[i] = '\0';
 	}
 	constexpr std::string_view error_view() const noexcept {
@@ -34572,7 +43057,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
 		const int s = intern(name, false);
-		if (syms[s].defined) { fail("ctlark: duplicate rule definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
 		syms[s].defined = true;
 		syms[s].bang = bang;
 		syms[s].cond = cond;
@@ -34581,7 +43066,7 @@ template <size_t N> struct grammar_tables {
 	}
 	constexpr int def_term(std::string_view name, int prio) noexcept {
 		const int s = intern(name, true);
-		if (syms[s].defined) { fail("ctlark: duplicate terminal definition"); }
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
 		syms[s].defined = true;
 		syms[s].prio = prio;
 		return s;
@@ -34628,12 +43113,12 @@ template <size_t N> struct grammar_tables {
 		}
 		const int root = emit_common(segs[1], *this);
 		if (root < 0) {
-			fail("ctlark: %import: not a supported common.* terminal");
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
 			return;
 		}
 		const int s = intern(alias, true);
 		if (syms[s].defined) {
-			fail("ctlark: duplicate terminal definition (%import)");
+			fail("ctlark: duplicate terminal definition (%import)", alias);
 			return;
 		}
 		syms[s].defined = true;
@@ -35126,7 +43611,7 @@ template <size_t N> struct grammar_tables {
 			case pk::tref: {
 				const int t = n.a;
 				if (syms[t].pattern < 0) {
-					fail("ctlark: reference to an undefined terminal");
+					fail("ctlark: reference to an undefined terminal", name_of(t));
 					return nfa_frag{0, 0};
 				}
 				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
@@ -35151,9 +43636,9 @@ template <size_t N> struct grammar_tables {
 	constexpr void validate() noexcept {
 		for (int i = 0; i < sym_count && ok; ++i) {
 			if (syms[i].terminal) {
-				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal"); }
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
 			} else {
-				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule"); }
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
 			}
 		}
 	}
@@ -35275,6 +43760,10 @@ struct rnode {
 	int child_count;
 };
 
+// how many expected terminals a failure records (the true count is
+// kept separately so a diagnostic can say "... and N more")
+inline constexpr int expected_cap = 12;
+
 template <size_t M> struct parse_result {
 	static constexpr int node_cap = static_cast<int>(8 * (M + 2) + 128);
 	static constexpr int child_cap = static_cast<int>(8 * (M + 2) + 128);
@@ -35282,6 +43771,9 @@ template <size_t M> struct parse_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
 
 	rnode nodes[static_cast<size_t>(node_cap)]{};
 	int node_count = 0;
@@ -35342,6 +43834,18 @@ template <typename GT, size_t M> struct pipeline_result {
 	bool ok = false;
 	perr err = perr::none;
 	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	// keep the terminals some Earley item expected at the failure point
+	constexpr void record_expected(const bool * exp, int sym_count) noexcept {
+		for (int t = 0; t < sym_count; ++t) {
+			if (!exp[t]) { continue; }
+			if (expected_count < expected_cap) { expected[expected_count++] = t; }
+			++expected_total;
+		}
+	}
 };
 
 // close set i: run predictions and completions to a fixpoint
@@ -35388,11 +43892,18 @@ constexpr bool accepted(const GT & g, int start_sym, const chart<GT, ItemCap, Se
 	return false;
 }
 
+// a tracer that traces nothing: every trace call is guarded by
+// `if constexpr (Tracer::enabled)`, so the disabled form costs zero
+// constexpr steps (debug.hpp provides the recording trace_log)
+struct null_tracer {
+	static constexpr bool enabled = false;
+};
+
 // the interleaved pipeline: close a set, lex among expected terminals,
 // scan, repeat
-template <typename GT, size_t M, int ItemCap, int SetCap>
+template <typename GT, size_t M, int ItemCap, int SetCap, typename Tracer = null_tracer>
 constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::string_view in,
-                                              chart<GT, ItemCap, SetCap> & ch) noexcept {
+                                              chart<GT, ItemCap, SetCap> & ch, Tracer * tr = nullptr) noexcept {
 	pipeline_result<GT, M> r{};
 	bool expected[static_cast<size_t>(GT::lim::syms)]{};
 	bool cur[static_cast<size_t>(GT::lim::states)]{};
@@ -35410,7 +43921,11 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 		close_set(g, ch, i);
 		ch.set_off[i + 1] = ch.item_count;
 		ch.set_count = i + 2;
+		if constexpr (Tracer::enabled) {
+			tr->event("earley: set closed (set, items)", {}, i, ch.set_off[i + 1] - ch.set_off[i]);
+		}
 		if (ch.overflow) {
+			if constexpr (Tracer::enabled) { tr->event("earley: chart overflow", {}, i); }
 			r.err = perr::overflow;
 			return r;
 		}
@@ -35509,8 +44024,10 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				}
 			}
 			if (best < 0) {
+				if constexpr (Tracer::enabled) { tr->event("lex: no terminal matches (offset)", {}, static_cast<long>(pos)); }
 				r.err = perr::lex;
 				r.err_pos = static_cast<int>(pos);
+				r.record_expected(expected, g.sym_count);
 				return r;
 			}
 			if (expected[best]) {
@@ -35518,18 +44035,24 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 				break;
 			}
 			// ignored: skip and lex again in the same set
+			if constexpr (Tracer::enabled) {
+				tr->event("lex: skip ignored (offset, length)", g.name_of(best), static_cast<long>(pos), accept_len[best]);
+			}
 			pos += static_cast<size_t>(accept_len[best]);
 		}
 
 		if (winner < 0) {
 			// input exhausted (possibly after trailing ignored tokens)
 			if (pos >= in.size() && accepted(g, start_sym, ch, i)) {
+				if constexpr (Tracer::enabled) { tr->event("earley: accepted (tokens)", {}, i); }
 				r.ok = true;
 				r.count = i;
 				return r;
 			}
+			if constexpr (Tracer::enabled) { tr->event("earley: rejected at end of tokens (offset)", {}, static_cast<long>(pos)); }
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 
@@ -35538,6 +44061,9 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			r.err = perr::overflow;
 			r.err_pos = static_cast<int>(pos);
 			return r;
+		}
+		if constexpr (Tracer::enabled) {
+			tr->event("lex: token (offset, length)", g.name_of(winner), static_cast<long>(pos), accept_len[winner]);
 		}
 		r.toks[r.count++] = lex_token{winner, static_cast<int>(pos), accept_len[winner]};
 		const int set_start = ch.set_off[i];
@@ -35553,6 +44079,7 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 			// nothing advanced: cannot happen (the winner was expected)
 			r.err = perr::parse;
 			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
 			return r;
 		}
 		pos += static_cast<size_t>(accept_len[winner]);
@@ -35566,23 +44093,37 @@ constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::
 
 // --- derivation extraction
 
-template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder {
+template <typename GT, typename RT, int ItemCap, int SetCap, typename Tracer = null_tracer> struct tree_builder {
 	const GT & g;
 	const chart<GT, ItemCap, SetCap> & ch;
 	const lex_token * toks;
 	int ntoks;
 	std::string_view input;
 	RT & out;
+	Tracer * tr = nullptr;
 	bool failed = false;
 	perr fail_kind = perr::none;
+	int fail_pos = -1; // byte offset of the failure, -1 when unknown
 
 	static constexpr int max_kids = 256;
 	static constexpr int max_depth = 256;
+
+	// the input offset where token index idx starts (input end past it)
+	constexpr int tok_off(int idx) const noexcept {
+		return idx < ntoks ? toks[idx].off : static_cast<int>(input.size());
+	}
 
 	constexpr void fail(perr k) noexcept {
 		if (!failed) {
 			failed = true;
 			fail_kind = k;
+		}
+	}
+	constexpr void fail(perr k, int pos) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+			fail_pos = pos;
 		}
 	}
 
@@ -35607,7 +44148,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	// where rhs symbol i starts; splits[rhs_len] == e
 	constexpr bool find_splits(int p, int s, int e, int * splits, int i, int pos, int depth) noexcept {
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(pos));
 			return false;
 		}
 		const cprod & pr = g.prods[p];
@@ -35653,7 +44194,7 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 	constexpr void derive(int sym, int s, int e, bool keep_all, int * kids, int & nkids, int depth) noexcept {
 		if (failed) { return; }
 		if (depth > max_depth) {
-			fail(perr::depth);
+			fail(perr::depth, tok_off(s));
 			return;
 		}
 		// first completed production, in definition order
@@ -35666,9 +44207,12 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 			if (failed) { return; }
 		}
 		if (chosen < 0) {
-			fail(perr::parse);
+			if constexpr (Tracer::enabled) { tr->event("derive: no completed production (tokens)", g.name_of(sym), s, e); }
+			fail(perr::parse, tok_off(s));
 			return;
 		}
+		if constexpr (Tracer::enabled) { tr->event("derive: production chosen (rule, tokens)", g.name_of(sym), chosen, e - s); }
+		CTLARK_CONSTEXPR_ASSERT(splits[g.prods[chosen].rhs_len] == e, "ctlark internal: derivation splits do not cover the span");
 		const cprod & pr = g.prods[chosen];
 		const csym & sm = g.syms[sym];
 		const bool splice = sm.splice || sm.inlined;
@@ -35730,8 +44274,8 @@ template <typename GT, typename RT, int ItemCap, int SetCap> struct tree_builder
 
 // --- the whole pipeline
 
-template <const auto & G, const auto & In, int StartSym>
-constexpr auto run_parse() noexcept {
+template <const auto & G, const auto & In, int StartSym, typename Tracer = null_tracer>
+constexpr auto run_parse_traced(Tracer * tr = nullptr) noexcept {
 	constexpr size_t M = In.size();
 	using GT = std::remove_cv_t<std::remove_reference_t<decltype(G)>>;
 	parse_result<M> r{};
@@ -35749,20 +44293,24 @@ constexpr auto run_parse() noexcept {
 	constexpr int item_cap = (dotted_positions(G) + 16) * (static_cast<int>(M) + 2) * 2;
 	constexpr int set_cap = static_cast<int>(M) + 3;
 	chart<GT, item_cap, set_cap> ch{};
-	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch);
+	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch, tr);
 	if (!pipe.ok) {
 		r.err = pipe.err;
 		r.err_pos = pipe.err_pos;
+		r.expected_count = pipe.expected_count;
+		r.expected_total = pipe.expected_total;
+		for (int k = 0; k < pipe.expected_count; ++k) { r.expected[k] = pipe.expected[k]; }
 		return r;
 	}
 
-	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap>;
-	TB tb{G, ch, pipe.toks, pipe.count, in, r};
+	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap, Tracer>;
+	TB tb{G, ch, pipe.toks, pipe.count, in, r, tr};
 	int kids[TB::max_kids]{};
 	int nkids = 0;
 	tb.derive(StartSym, 0, pipe.count, false, kids, nkids, 0);
 	if (tb.failed) {
 		r.err = tb.fail_kind;
+		if (tb.fail_pos >= 0) { r.err_pos = tb.fail_pos; }
 		return r;
 	}
 	if (nkids == 1) {
@@ -35782,6 +44330,3312 @@ constexpr auto run_parse() noexcept {
 	}
 	r.ok = true;
 	return r;
+}
+
+template <const auto & G, const auto & In, int StartSym>
+constexpr auto run_parse() noexcept {
+	return run_parse_traced<G, In, StartSym>();
+}
+
+} // namespace ctlark::detail
+
+#endif
+
+#ifndef CTLARK__TREE__HPP
+#define CTLARK__TREE__HPP
+
+#ifndef CTLARK__TEXT__HPP
+#define CTLARK__TEXT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// A compile-time string as a type: one non-type template parameter per
+// character. Used for names and token values throughout - two texts
+// with the same characters are the same TYPE, which is what makes
+// name comparisons and tree lookups plain type equality.
+
+namespace ctlark {
+
+template <auto... Chars> struct text {
+	// null-terminated so c_str()/data() work as C strings; size() excludes it
+	static constexpr char storage[sizeof...(Chars) + 1]{static_cast<char>(Chars)..., '\0'};
+
+	static constexpr const char * c_str() noexcept {
+		return storage;
+	}
+	static constexpr size_t size() noexcept {
+		return sizeof...(Chars);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Chars) == 0;
+	}
+	static constexpr std::string_view view() noexcept {
+		return std::string_view{storage, sizeof...(Chars)};
+	}
+	constexpr operator std::string_view() const noexcept {
+		return view();
+	}
+	template <auto... Rhs> constexpr bool operator==(text<Rhs...>) const noexcept {
+		return view() == text<Rhs...>::view();
+	}
+	friend constexpr bool operator==(text, std::string_view rhs) noexcept {
+		return view() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, text) noexcept {
+		return lhs == view();
+	}
+#if __cplusplus < 202002L
+	template <auto... Rhs> constexpr bool operator!=(text<Rhs...>) const noexcept {
+		return view() != text<Rhs...>::view();
+	}
+	friend constexpr bool operator!=(text, std::string_view rhs) noexcept {
+		return view() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, text) noexcept {
+		return lhs != view();
+	}
+#endif
+};
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLL__UTILITIES__HPP
+#define CTLL__UTILITIES__HPP
+
+#ifndef CTLL_IN_A_MODULE
+#include <type_traits>
+#endif
+
+#ifdef CTLL_IN_A_MODULE
+#define CTLL_EXPORT export
+#else
+#define CTLL_EXPORT 
+#endif
+
+#if defined __cpp_nontype_template_parameter_class
+    #define CTLL_CNTTP_COMPILER_CHECK 1
+#elif defined __cpp_nontype_template_args
+// compiler which defines correctly feature test macro (not you clang)
+    #if __cpp_nontype_template_args >= 201911L
+        #define CTLL_CNTTP_COMPILER_CHECK 1
+    #elif __cpp_nontype_template_args >= 201411L
+// appleclang 13+
+      #if defined __apple_build_version__
+        #if defined __clang_major__ && __clang_major__ >= 13
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #else 
+// clang 12+
+        #if defined __clang_major__ && __clang_major__ >= 12
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #endif
+    #endif
+#endif
+
+#ifndef CTLL_CNTTP_COMPILER_CHECK
+    #define CTLL_CNTTP_COMPILER_CHECK 0
+#endif
+
+#ifdef _MSC_VER
+#define CTLL_FORCE_INLINE __forceinline
+#else
+#define CTLL_FORCE_INLINE __attribute__((always_inline))
+#endif
+
+namespace ctll {
+	
+template <bool> struct conditional_helper;
+	
+template <> struct conditional_helper<true> {
+	template <typename A, typename> using type = A;
+};
+
+template <> struct conditional_helper<false> {
+	template <typename, typename B> using type = B;
+};
+
+template <bool V, typename A, typename B> using conditional = typename conditional_helper<V>::template type<A,B>;
+	
+}
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#include <type_traits>
+#endif
+
+// The parse tree a parse produces, shaped like lark's: Tree nodes with
+// a data name and children, Token leaves with a terminal type and a
+// value. The whole tree is a TYPE - every name, value and nesting
+// level is encoded in template parameters - so the objects are empty
+// and every accessor is constexpr and static.
+//
+// repr() renders lark's textual form:
+//
+//   Tree(start, [Token(WORD, 'Hello'), Token(WORD, 'World')])
+//
+// and pretty() the indented form. Both live in static storage.
+
+namespace ctlark {
+
+enum class kind {
+	tree,
+	token
+};
+
+template <typename Type, typename Value> struct token;
+template <typename Data, typename... Children> struct tree;
+
+namespace detail {
+
+template <size_t Index, typename Head, typename... Tail> constexpr auto nth() noexcept {
+	if constexpr (Index == 0) {
+		return Head{};
+	} else {
+		return nth<Index - 1, Tail...>();
+	}
+}
+
+// compare a compile-time key against a text type's content
+#if CTLL_CNTTP_COMPILER_CHECK
+template <ctll::fixed_string Key, typename Text> constexpr bool text_matches() noexcept {
+#else
+template <const auto & Key, typename Text> constexpr bool text_matches() noexcept {
+#endif
+	constexpr auto view = Text::view();
+	if (Key.size() != view.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < view.size(); ++i) {
+		if (static_cast<char32_t>(static_cast<unsigned char>(view[i])) != Key[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// --- repr rendering (a size pass, then a fill pass in static storage)
+
+constexpr size_t repr_escaped_size(std::string_view v) noexcept {
+	size_t n = 0;
+	for (const char c : v) { n += (c == '\'' || c == '\\') ? 2 : 1; }
+	return n;
+}
+
+struct repr_sink {
+	char * out;
+	size_t at = 0;
+	constexpr void put(std::string_view s) noexcept {
+		for (const char c : s) { out[at++] = c; }
+	}
+	constexpr void put_escaped(std::string_view s) noexcept {
+		for (const char c : s) {
+			if (c == '\'' || c == '\\') { out[at++] = '\\'; }
+			out[at++] = c;
+		}
+	}
+};
+
+template <typename Node> struct repr_size;
+template <typename Type, typename Value> struct repr_size<token<Type, Value>> {
+	// Token(TYPE, 'value')
+	static constexpr size_t value = 6 + Type::size() + 3 + repr_escaped_size(Value::view()) + 2;
+};
+template <typename Data, typename... Children> struct repr_size<tree<Data, Children...>> {
+	// Tree(data, [c1, c2])
+	static constexpr size_t value = 5 + Data::size() + 3
+		+ (repr_size<Children>::value + ... + 0)
+		+ (sizeof...(Children) > 1 ? (sizeof...(Children) - 1) * 2 : 0)
+		+ 2;
+};
+
+template <typename Node> constexpr void repr_render(repr_sink & s) noexcept;
+
+template <typename Type, typename Value, typename Sink = repr_sink>
+constexpr void repr_render_token(repr_sink & s) noexcept {
+	s.put("Token(");
+	s.put(Type::view());
+	s.put(", '");
+	s.put_escaped(Value::view());
+	s.put("')");
+}
+
+template <typename Data, typename... Children>
+constexpr void repr_render_tree(repr_sink & s) noexcept {
+	s.put("Tree(");
+	s.put(Data::view());
+	s.put(", [");
+	bool first = true;
+	((first ? (void)(first = false) : s.put(", "), repr_render<Children>(s)), ...);
+	s.put("])");
+}
+
+template <typename Node> struct repr_dispatch;
+template <typename Type, typename Value> struct repr_dispatch<token<Type, Value>> {
+	static constexpr void render(repr_sink & s) noexcept {
+		repr_render_token<Type, Value>(s);
+	}
+};
+template <typename Data, typename... Children> struct repr_dispatch<tree<Data, Children...>> {
+	static constexpr void render(repr_sink & s) noexcept {
+		repr_render_tree<Data, Children...>(s);
+	}
+};
+template <typename Node> constexpr void repr_render(repr_sink & s) noexcept {
+	repr_dispatch<Node>::render(s);
+}
+
+template <typename Node> struct repr_storage {
+	static constexpr size_t length = repr_size<Node>::value;
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		repr_render<Node>(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+// --- pretty rendering: data per line, children indented two spaces
+
+template <typename Node> struct pretty_size;
+template <typename Type, typename Value> struct pretty_size<token<Type, Value>> {
+	static constexpr size_t at(size_t indent) noexcept {
+		return indent + Value::size() + 1;
+	}
+};
+template <typename Data, typename... Children> struct pretty_size<tree<Data, Children...>> {
+	static constexpr size_t at(size_t indent) noexcept {
+		return indent + Data::size() + 1 + (pretty_size<Children>::at(indent + 2) + ... + 0);
+	}
+};
+
+template <typename Node> struct pretty_dispatch;
+template <typename Node> constexpr void pretty_render(repr_sink & s, size_t indent) noexcept {
+	pretty_dispatch<Node>::render(s, indent);
+}
+template <typename Type, typename Value> struct pretty_dispatch<token<Type, Value>> {
+	static constexpr void render(repr_sink & s, size_t indent) noexcept {
+		for (size_t i = 0; i < indent; ++i) { s.put(" "); }
+		s.put(Value::view());
+		s.put("\n");
+	}
+};
+template <typename Data, typename... Children> struct pretty_dispatch<tree<Data, Children...>> {
+	static constexpr void render(repr_sink & s, size_t indent) noexcept {
+		for (size_t i = 0; i < indent; ++i) { s.put(" "); }
+		s.put(Data::view());
+		s.put("\n");
+		(pretty_render<Children>(s, indent + 2), ...);
+	}
+};
+
+template <typename Node> struct pretty_storage {
+	static constexpr size_t length = pretty_size<Node>::at(0);
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		pretty_render<Node>(s, 0);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+// --- Token: a terminal match; type() is the terminal name
+
+template <typename Type, typename Value> struct token {
+	static constexpr ctlark::kind node_kind = kind::token;
+	using type_type = Type;
+	using value_type = Value;
+
+	static constexpr bool is_token() noexcept {
+		return true;
+	}
+	static constexpr bool is_tree() noexcept {
+		return false;
+	}
+	static constexpr std::string_view type() noexcept {
+		return Type::view();
+	}
+	static constexpr std::string_view value() noexcept {
+		return Value::view();
+	}
+	static constexpr size_t size() noexcept {
+		return Value::size();
+	}
+	// Token(WORD, 'Hello')
+	static constexpr std::string_view repr() noexcept {
+		return detail::repr_storage<token>::view;
+	}
+
+	constexpr operator std::string_view() const noexcept {
+		return value();
+	}
+	friend constexpr bool operator==(token, std::string_view rhs) noexcept {
+		return value() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, token) noexcept {
+		return lhs == value();
+	}
+#if __cplusplus < 202002L
+	friend constexpr bool operator!=(token, std::string_view rhs) noexcept {
+		return value() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, token) noexcept {
+		return lhs != value();
+	}
+#endif
+};
+
+// --- Tree: a rule match; data() names the rule (or its -> alias)
+
+template <typename Data, typename... Children> struct tree {
+	static constexpr ctlark::kind node_kind = kind::tree;
+	using data_type = Data;
+
+	static constexpr bool is_token() noexcept {
+		return false;
+	}
+	static constexpr bool is_tree() noexcept {
+		return true;
+	}
+	static constexpr std::string_view data() noexcept {
+		return Data::view();
+	}
+
+	static constexpr size_t child_count() noexcept {
+		return sizeof...(Children);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Children) == 0;
+	}
+	template <size_t Index> static constexpr auto child() noexcept {
+		static_assert(Index < sizeof...(Children), "ctlark: child index out of range");
+		return detail::nth<Index, Children...>();
+	}
+
+	// --- child trees by data name (get: first match, a compile error
+	// when absent)
+
+#if CTLL_CNTTP_COMPILER_CHECK
+	template <ctll::fixed_string Name> static constexpr bool contains() noexcept {
+		return (child_matches<Name, Children>() || ...);
+	}
+	template <ctll::fixed_string Name> static constexpr size_t count() noexcept {
+		return (static_cast<size_t>(child_matches<Name, Children>()) + ... + 0);
+	}
+	template <ctll::fixed_string Name> static constexpr auto get() noexcept {
+		static_assert((child_matches<Name, Children>() || ...), "ctlark: no child tree with this data");
+		return find_child<Name, Children...>();
+	}
+#else
+	template <const auto & Name> static constexpr bool contains() noexcept {
+		return (child_matches<Name, Children>() || ...);
+	}
+	template <const auto & Name> static constexpr size_t count() noexcept {
+		return (static_cast<size_t>(child_matches<Name, Children>()) + ... + 0);
+	}
+	template <const auto & Name> static constexpr auto get() noexcept {
+		static_assert((child_matches<Name, Children>() || ...), "ctlark: no child tree with this data");
+		return find_child<Name, Children...>();
+	}
+#endif
+
+	// Tree(start, [Token(WORD, 'Hello'), Token(WORD, 'World')])
+	static constexpr std::string_view repr() noexcept {
+		return detail::repr_storage<tree>::view;
+	}
+	// the indented multi-line form, like lark's Tree.pretty()
+	static constexpr std::string_view pretty() noexcept {
+		return detail::pretty_storage<tree>::view;
+	}
+
+private:
+#if CTLL_CNTTP_COMPILER_CHECK
+	template <ctll::fixed_string Name, typename Child> static constexpr bool child_matches() noexcept {
+#else
+	template <const auto & Name, typename Child> static constexpr bool child_matches() noexcept {
+#endif
+		if constexpr (Child::node_kind == kind::tree) {
+			return detail::text_matches<Name, typename Child::data_type>();
+		} else {
+			return false;
+		}
+	}
+
+#if CTLL_CNTTP_COMPILER_CHECK
+	template <ctll::fixed_string Name, typename Head, typename... Tail> static constexpr auto find_child() noexcept {
+#else
+	template <const auto & Name, typename Head, typename... Tail> static constexpr auto find_child() noexcept {
+#endif
+		if constexpr (child_matches<Name, Head>()) {
+			return Head{};
+		} else {
+			return find_child<Name, Tail...>();
+		}
+	}
+};
+
+// compile-time iteration over a tree's children, each with its own type
+CTLL_EXPORT template <typename F, typename Data, typename... Children>
+constexpr void for_each_child(tree<Data, Children...>, F && f) {
+	(f(Children{}), ...);
+}
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLL__UTILITIES__HPP
+#define CTLL__UTILITIES__HPP
+
+#ifndef CTLL_IN_A_MODULE
+#include <type_traits>
+#endif
+
+#ifdef CTLL_IN_A_MODULE
+#define CTLL_EXPORT export
+#else
+#define CTLL_EXPORT 
+#endif
+
+#if defined __cpp_nontype_template_parameter_class
+    #define CTLL_CNTTP_COMPILER_CHECK 1
+#elif defined __cpp_nontype_template_args
+// compiler which defines correctly feature test macro (not you clang)
+    #if __cpp_nontype_template_args >= 201911L
+        #define CTLL_CNTTP_COMPILER_CHECK 1
+    #elif __cpp_nontype_template_args >= 201411L
+// appleclang 13+
+      #if defined __apple_build_version__
+        #if defined __clang_major__ && __clang_major__ >= 13
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #else 
+// clang 12+
+        #if defined __clang_major__ && __clang_major__ >= 12
+// but only in c++20 and more
+          #if __cplusplus > 201703L
+              #define CTLL_CNTTP_COMPILER_CHECK 1
+          #endif
+        #endif
+      #endif
+    #endif
+#endif
+
+#ifndef CTLL_CNTTP_COMPILER_CHECK
+    #define CTLL_CNTTP_COMPILER_CHECK 0
+#endif
+
+#ifdef _MSC_VER
+#define CTLL_FORCE_INLINE __forceinline
+#else
+#define CTLL_FORCE_INLINE __attribute__((always_inline))
+#endif
+
+namespace ctll {
+	
+template <bool> struct conditional_helper;
+	
+template <> struct conditional_helper<true> {
+	template <typename A, typename> using type = A;
+};
+
+template <> struct conditional_helper<false> {
+	template <typename, typename B> using type = B;
+};
+
+template <bool V, typename A, typename B> using conditional = typename conditional_helper<V>::template type<A,B>;
+	
+}
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// Queryable diagnostics for failed constexpr parses. is_valid<> stays
+// a plain bool; when it is false, error_info() says WHAT failed and
+// WHERE (kind, byte offset, line, column, the expected terminals) and
+// error_message() renders the whole story as one static string:
+//
+//   ctlark: lexical error at line 1, column 7: no expected terminal matches
+//     [1, 2,]
+//           ^
+//   expected: SIGNED_NUMBER, ']', ESCAPED_STRING
+//
+// Everything is computed at compile time; the message lives in static
+// storage via the same size-pass/fill-pass idiom as tree repr().
+
+namespace ctlark {
+
+// what stage of a parse failed
+CTLL_EXPORT enum class error_kind : unsigned char {
+	none,             // the parse succeeded
+	bad_grammar_text, // the grammar text is not valid Lark
+	bad_grammar,      // the grammar text parsed but does not lower to usable tables
+	no_start_rule,    // the requested start rule is not defined in the grammar
+	lex,              // no expected terminal matches the input at the position
+	parse,            // the token stream does not derive from the start rule
+	overflow,         // an internal pool was exhausted (input too large)
+	depth             // the derivation recursion limit was hit
+};
+
+CTLL_EXPORT constexpr std::string_view to_string(error_kind k) noexcept {
+	switch (k) {
+		case error_kind::none: return "none";
+		case error_kind::bad_grammar_text: return "bad grammar text";
+		case error_kind::bad_grammar: return "bad grammar";
+		case error_kind::no_start_rule: return "no start rule";
+		case error_kind::lex: return "lexical error";
+		case error_kind::parse: return "syntax error";
+		case error_kind::overflow: return "capacity overflow";
+		case error_kind::depth: return "depth limit";
+	}
+	return "unknown";
+}
+
+// a byte offset resolved to 1-based line and column
+CTLL_EXPORT struct source_position {
+	size_t offset = 0;
+	size_t line = 1;
+	size_t column = 1;
+};
+
+CTLL_EXPORT constexpr source_position locate(std::string_view text, size_t offset) noexcept {
+	source_position p{};
+	if (offset > text.size()) { offset = text.size(); }
+	p.offset = offset;
+	for (size_t i = 0; i < offset; ++i) {
+		if (text[i] == '\n') {
+			++p.line;
+			p.column = 1;
+		} else {
+			++p.column;
+		}
+	}
+	return p;
+}
+
+// everything a failed parse knows, as one value. For bad_grammar_text
+// the position refers to the GRAMMAR text; for input failures (lex,
+// parse, overflow, depth) it refers to the input. expected[] holds the
+// terminals some Earley item was waiting for at the failure point -
+// named terminals by name, anonymous literals by their spelling.
+CTLL_EXPORT struct error_info_t {
+	error_kind kind = error_kind::none;
+	size_t position = 0;
+	size_t line = 1;
+	size_t column = 1;
+	std::string_view expected[static_cast<size_t>(detail::expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0; // > expected_count when the list was capped
+
+	constexpr bool ok() const noexcept {
+		return kind == error_kind::none;
+	}
+};
+
+namespace detail {
+
+// display spelling of a terminal: named terminals by name, anonymous
+// keyword literals by their content
+template <typename GT> constexpr bool term_is_literal(const GT & g, int sym) noexcept {
+	return g.syms[sym].keyword && g.syms[sym].lit_off >= 0;
+}
+template <typename GT> constexpr std::string_view term_display(const GT & g, int sym) noexcept {
+	if (term_is_literal(g, sym)) { return g.pool_view(g.syms[sym].lit_off, g.syms[sym].lit_len); }
+	return g.name_of(sym);
+}
+
+// a sink that only measures (the size pass of the render)
+struct count_sink {
+	size_t at = 0;
+	constexpr void put(std::string_view s) noexcept {
+		at += s.size();
+	}
+	constexpr void put_escaped(std::string_view s) noexcept {
+		at += repr_escaped_size(s);
+	}
+};
+
+template <typename Sink> constexpr void put_uint(Sink & s, size_t v) noexcept {
+	char buf[20]{};
+	size_t n = 0;
+	do {
+		buf[n++] = static_cast<char>('0' + v % 10);
+		v /= 10;
+	} while (v > 0);
+	for (size_t i = 0; i < n / 2; ++i) {
+		const char t = buf[i];
+		buf[i] = buf[n - 1 - i];
+		buf[n - 1 - i] = t;
+	}
+	s.put(std::string_view{buf, n});
+}
+
+// the line around pos, windowed so the caret is always visible
+inline constexpr size_t snippet_width = 72;
+inline constexpr size_t snippet_caret_max = 60;
+
+template <typename Sink>
+constexpr void render_snippet(Sink & s, std::string_view text, size_t pos) noexcept {
+	if (pos > text.size()) { pos = text.size(); }
+	size_t ls = pos;
+	while (ls > 0 && text[ls - 1] != '\n') { --ls; }
+	size_t le = pos;
+	while (le < text.size() && text[le] != '\n') { ++le; }
+	size_t ws = ls;
+	if (pos - ws > snippet_caret_max) { ws = pos - snippet_caret_max; }
+	size_t we = le;
+	if (we - ws > snippet_width) { we = ws + snippet_width; }
+	s.put("\n  ");
+	for (size_t i = ws; i < we; ++i) {
+		const char c = text[i];
+		s.put((c == '\t' || c == '\r') ? std::string_view{" "} : text.substr(i, 1));
+	}
+	s.put("\n  ");
+	for (size_t i = ws; i < pos; ++i) { s.put(" "); }
+	s.put("^");
+}
+
+// render the whole diagnostic; runs twice (a size pass with
+// count_sink, then a fill pass with repr_sink into static storage)
+template <typename GT, typename Sink>
+constexpr void render_error(Sink & s, const GT & g, error_kind kind, std::string_view text, size_t pos,
+                            const int * expected, int expected_count, int expected_total,
+                            std::string_view start_rule) noexcept {
+	if (kind == error_kind::none) { return; }
+	if (kind == error_kind::bad_grammar) {
+		s.put(g.error_view());
+		return;
+	}
+	if (kind == error_kind::no_start_rule) {
+		s.put("ctlark: the start rule '");
+		s.put(start_rule);
+		s.put("' is not defined in the grammar");
+		return;
+	}
+
+	const source_position at = locate(text, pos);
+	s.put("ctlark: ");
+	switch (kind) {
+		case error_kind::bad_grammar_text: s.put("the grammar text is not valid Lark"); break;
+		case error_kind::lex: s.put("lexical error"); break;
+		case error_kind::parse: s.put("syntax error"); break;
+		case error_kind::overflow: s.put("capacity overflow"); break;
+		case error_kind::depth: s.put("derivation depth limit hit"); break;
+		default: break;
+	}
+	s.put(" at line ");
+	put_uint(s, at.line);
+	s.put(", column ");
+	put_uint(s, at.column);
+	switch (kind) {
+		case error_kind::bad_grammar_text:
+			break;
+		case error_kind::lex:
+			s.put(": no expected terminal matches");
+			break;
+		case error_kind::parse:
+			s.put(pos >= text.size() ? ": unexpected end of input" : ": the input does not match the grammar here");
+			break;
+		case error_kind::overflow:
+			s.put(": an internal pool was exhausted (the input is too large for the compiled limits)");
+			break;
+		case error_kind::depth:
+			s.put(": the input nests too deeply");
+			break;
+		default:
+			break;
+	}
+	render_snippet(s, text, pos);
+	if (expected_count > 0) {
+		s.put("\nexpected: ");
+		for (int i = 0; i < expected_count; ++i) {
+			if (i > 0) { s.put(", "); }
+			const int sym = expected[i];
+			if (term_is_literal(g, sym)) {
+				s.put("'");
+				s.put_escaped(term_display(g, sym));
+				s.put("'");
+			} else {
+				s.put(term_display(g, sym));
+			}
+		}
+		if (expected_total > expected_count) {
+			s.put(", and ");
+			put_uint(s, static_cast<size_t>(expected_total - expected_count));
+			s.put(" more");
+		}
+	}
+}
+
+// the characters of a def's fixed_string members, as string_views in
+// static storage (fixed_strings hold char32_t units carrying bytes)
+template <typename PD> struct input_text {
+	static constexpr size_t length = PD::in.size();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t make() noexcept {
+		out_t o{};
+		for (size_t i = 0; i < length; ++i) { o.content[i] = static_cast<char>(PD::in[i]); }
+		return o;
+	}
+	static constexpr out_t content = make();
+	static constexpr std::string_view view{content.content, length};
+};
+
+template <typename GD> struct grammar_text {
+	static constexpr size_t length = GD::text.size();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t make() noexcept {
+		out_t o{};
+		for (size_t i = 0; i < length; ++i) { o.content[i] = static_cast<char>(GD::text[i]); }
+		return o;
+	}
+	static constexpr out_t content = make();
+	static constexpr std::string_view view{content.content, length};
+};
+
+template <typename PD> struct start_text {
+	static constexpr size_t length = PD::start_name.size();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t make() noexcept {
+		out_t o{};
+		for (size_t i = 0; i < length; ++i) { o.content[i] = static_cast<char>(PD::start_name[i]); }
+		return o;
+	}
+	static constexpr out_t content = make();
+	static constexpr std::string_view view{content.content, length};
+};
+
+// which error_kind a parse_def failed with (none when it succeeded)
+template <typename PD> constexpr error_kind classify() noexcept {
+	if constexpr (!PD::def::text_ok) {
+		return error_kind::bad_grammar_text;
+	} else if constexpr (!PD::def::tables.ok) {
+		return error_kind::bad_grammar;
+	} else if constexpr (PD::start_sym < 0) {
+		return error_kind::no_start_rule;
+	} else if constexpr (PD::result.ok) {
+		return error_kind::none;
+	} else {
+		switch (PD::result.err) {
+			case perr::lex: return error_kind::lex;
+			case perr::overflow: return error_kind::overflow;
+			case perr::depth: return error_kind::depth;
+			default: return error_kind::parse;
+		}
+	}
+}
+
+template <typename PD> constexpr error_info_t error_info_of() noexcept {
+	error_info_t e{};
+	e.kind = classify<PD>();
+	if constexpr (!PD::def::text_ok) {
+		e.position = PD::def::text_error_pos;
+		const source_position at = locate(grammar_text<typename PD::def>::view, e.position);
+		e.line = at.line;
+		e.column = at.column;
+	} else if constexpr (PD::def::tables.ok && PD::start_sym >= 0) {
+		if constexpr (!PD::result.ok) {
+			e.position = static_cast<size_t>(PD::result.err_pos);
+			const source_position at = locate(input_text<PD>::view, e.position);
+			e.line = at.line;
+			e.column = at.column;
+			e.expected_count = PD::result.expected_count;
+			e.expected_total = PD::result.expected_total;
+			for (int i = 0; i < PD::result.expected_count; ++i) {
+				e.expected[i] = term_display(PD::def::tables, PD::result.expected[i]);
+			}
+		}
+	}
+	return e;
+}
+
+// the rendered message in static storage (only instantiated on demand,
+// and only for failed parses)
+template <typename PD> struct message_storage {
+	static constexpr error_kind kind = classify<PD>();
+
+	static constexpr std::string_view text() noexcept {
+		if constexpr (kind == error_kind::bad_grammar_text) {
+			return grammar_text<typename PD::def>::view;
+		} else {
+			return input_text<PD>::view;
+		}
+	}
+	static constexpr size_t pos() noexcept {
+		if constexpr (kind == error_kind::bad_grammar_text) {
+			return PD::def::text_error_pos;
+		} else {
+			return static_cast<size_t>(PD::result.err_pos);
+		}
+	}
+
+	template <typename Sink> static constexpr void render(Sink & s) noexcept {
+		render_error(s, PD::def::tables, kind, text(), pos(), PD::result.expected, PD::result.expected_count,
+		             PD::result.expected_total, start_text<PD>::view);
+	}
+
+	static constexpr size_t measure() noexcept {
+		count_sink s{};
+		render(s);
+		return s.at;
+	}
+	static constexpr size_t length = measure();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		render(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLARK__LIFT__HPP
+#define CTLARK__LIFT__HPP
+
+#ifndef CTLARK__EARLEY__HPP
+#define CTLARK__EARLEY__HPP
+
+#ifndef CTLARK__COMPILE__HPP
+#define CTLARK__COMPILE__HPP
+
+#ifndef CTLARK__AST__HPP
+#define CTLARK__AST__HPP
+
+#ifndef CTLARK__TEXT__HPP
+#define CTLARK__TEXT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// A compile-time string as a type: one non-type template parameter per
+// character. Used for names and token values throughout - two texts
+// with the same characters are the same TYPE, which is what makes
+// name comparisons and tree lookups plain type equality.
+
+namespace ctlark {
+
+template <auto... Chars> struct text {
+	// null-terminated so c_str()/data() work as C strings; size() excludes it
+	static constexpr char storage[sizeof...(Chars) + 1]{static_cast<char>(Chars)..., '\0'};
+
+	static constexpr const char * c_str() noexcept {
+		return storage;
+	}
+	static constexpr size_t size() noexcept {
+		return sizeof...(Chars);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Chars) == 0;
+	}
+	static constexpr std::string_view view() noexcept {
+		return std::string_view{storage, sizeof...(Chars)};
+	}
+	constexpr operator std::string_view() const noexcept {
+		return view();
+	}
+	template <auto... Rhs> constexpr bool operator==(text<Rhs...>) const noexcept {
+		return view() == text<Rhs...>::view();
+	}
+	friend constexpr bool operator==(text, std::string_view rhs) noexcept {
+		return view() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, text) noexcept {
+		return lhs == view();
+	}
+#if __cplusplus < 202002L
+	template <auto... Rhs> constexpr bool operator!=(text<Rhs...>) const noexcept {
+		return view() != text<Rhs...>::view();
+	}
+	friend constexpr bool operator!=(text, std::string_view rhs) noexcept {
+		return view() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, text) noexcept {
+		return lhs != view();
+	}
+#endif
+};
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// The type-level AST of a Lark grammar, built by the semantic actions
+// (actions.hpp) while CTLL parses the grammar text. Each node knows how
+// to lower itself into the flat constexpr expression program that
+// compile.hpp works with: emit(builder) appends nodes and returns the
+// index of the root it created. The builder is duck-typed (see
+// compile.hpp for the real one) so this header stays independent.
+
+namespace ctlark::ast {
+
+// flat program node kinds
+enum class pk : unsigned char {
+	seq,       // children in order
+	alt,       // children are alternatives
+	star,      // one child, zero or more
+	plus,      // one child, one or more
+	opt,       // one child, zero or one
+	rep,       // one child, a=min, b=max (-1 = unbounded)
+	chr,       // a = the character
+	range,     // a = low, b = high
+	any,       // any character (except newline, unless dotall)
+	str,       // literal string: a = pool offset, b = length
+	cls,       // character class, a = 1 if negated, children are members
+	cw,        // \w   word character
+	cd,        // \d   digit
+	cs,        // \s   whitespace
+	cnw,       // \W
+	cnd,       // \D
+	cns,       // \S
+	rref,      // rule reference, a = symbol id
+	tref,      // terminal reference, a = symbol id
+	ci,        // one child, match case-insensitively
+	dotall,    // one child, any also matches newline
+	rx         // one child, provenance: came from a /regex/ literal
+};
+
+// --- expression nodes
+
+template <typename... Es> struct seq {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::seq);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename... Es> struct alt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::alt);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename E> struct star {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::star);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct plus {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::plus);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct opt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::opt);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E, int Min, int Max> struct rep {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rep, Min, Max);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <auto C> struct chr {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::chr, static_cast<int>(C));
+	}
+};
+
+template <auto Lo, auto Hi> struct crange {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::range, static_cast<int>(Lo), static_cast<int>(Hi));
+	}
+};
+
+struct any_char {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::any);
+	}
+};
+
+template <typename Text, bool Ci> struct lit {
+	using text_type = Text;
+	static constexpr bool case_insensitive = Ci;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_str(Text::view(), Ci);
+	}
+};
+
+struct word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cw); }
+};
+struct digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cd); }
+};
+struct space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cs); }
+};
+struct not_word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnw); }
+};
+struct not_digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnd); }
+};
+struct not_space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cns); }
+};
+
+template <bool Neg, typename... Members> struct cls {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::cls, Neg ? 1 : 0);
+		int last = -1;
+		((last = b.link(self, last, Members::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename Name> struct rule_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), false);
+	}
+};
+
+template <typename Name> struct term_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), true);
+	}
+};
+
+template <typename E> struct ci {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::ci);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct dotall {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::dotall);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// provenance wrapper: this expression came from a /regex/ literal, so
+// in a rule body it is ONE anonymous terminal, not structure
+template <typename E> struct rx {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rx);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// --- one alternative of a definition; Alias is void or a text
+
+template <typename Seq, typename Alias> struct branch { };
+
+namespace detail {
+
+template <typename Br> struct branch_parts;
+template <typename Seq, typename Alias> struct branch_parts<branch<Seq, Alias>> {
+	using seq = Seq;
+	using alias = Alias;
+	static constexpr bool aliased = !std::is_void_v<Alias>;
+	static constexpr std::string_view alias_view() noexcept {
+		if constexpr (aliased) {
+			return Alias::view();
+		} else {
+			return std::string_view{};
+		}
+	}
+};
+
+} // namespace detail
+
+// --- top-level items
+
+template <typename Name, bool Bang, bool Cond, int Priority, typename... Branches> struct rule_def {
+	using name_type = Name;
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_rule(Name::view(), Bang, Cond, Priority);
+		(b.add_alternative(sym, detail::branch_parts<Branches>::seq::emit(b),
+		                   detail::branch_parts<Branches>::alias_view()), ...);
+	}
+};
+
+template <typename Name, int Priority, typename... Branches> struct term_def {
+	using name_type = Name;
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in terminal definitions");
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_term(Name::view(), Priority);
+		(b.add_term_alternative(sym, detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+template <typename... Branches> struct ignore_def {
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in %ignore");
+	template <typename B> static constexpr void collect(B & b) {
+		(b.add_ignore(detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+// %import path -> alias (or the same name); Segs are the path segments
+template <typename Alias, typename... Segs> struct import_def {
+	template <typename B> static constexpr void collect(B & b) {
+		constexpr size_t n = sizeof...(Segs);
+		static_assert(n >= 2, "ctlark: %import needs a dotted path (only common.* is supported)");
+		const std::string_view segs[]{Segs::view()...};
+		b.import_builtin(segs, n, Alias::view());
+	}
+};
+
+// the whole grammar, in source order
+template <typename... Items> struct grammar {
+	static constexpr size_t item_count = sizeof...(Items);
+	template <typename B> static constexpr void collect(B & b) {
+		(Items::collect(b), ...);
+	}
+};
+
+} // namespace ctlark::ast
+
+#endif
+
+#ifndef CTLARK__ASSERT__HPP
+#define CTLARK__ASSERT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstdlib>
+#endif
+
+// Internal invariant checks that work during constant evaluation.
+//
+// Define CTLARK_DEBUG to enable them. When a check fails while the
+// compiler is evaluating a constexpr parse, evaluation stops with an
+// error pointing at the CTLARK_CONSTEXPR_ASSERT line: the call to
+// constexpr_assert_failed is the diagnostic, because that function is
+// deliberately not constexpr and the compiler quotes the call - with
+// the message literal - when it rejects it. The same check running at
+// runtime aborts. Without CTLARK_DEBUG the checks compile away
+// entirely.
+
+namespace ctlark::detail {
+
+// not constexpr, on purpose: reaching this call during constant
+// evaluation is what produces the compiler error
+[[noreturn]] inline void constexpr_assert_failed(const char * /*msg*/) noexcept {
+	std::abort();
+}
+
+} // namespace ctlark::detail
+
+#ifdef CTLARK_DEBUG
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) \
+	do { \
+		if (!(cond)) { ::ctlark::detail::constexpr_assert_failed(msg); } \
+	} while (false)
+#else
+#define CTLARK_CONSTEXPR_ASSERT(cond, msg) ((void)0)
+#endif
+
+#endif
+
+#ifndef CTLARK__COMMON__HPP
+#define CTLARK__COMMON__HPP
+
+#ifndef CTLARK__AST__HPP
+#define CTLARK__AST__HPP
+
+#ifndef CTLARK__TEXT__HPP
+#define CTLARK__TEXT__HPP
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// A compile-time string as a type: one non-type template parameter per
+// character. Used for names and token values throughout - two texts
+// with the same characters are the same TYPE, which is what makes
+// name comparisons and tree lookups plain type equality.
+
+namespace ctlark {
+
+template <auto... Chars> struct text {
+	// null-terminated so c_str()/data() work as C strings; size() excludes it
+	static constexpr char storage[sizeof...(Chars) + 1]{static_cast<char>(Chars)..., '\0'};
+
+	static constexpr const char * c_str() noexcept {
+		return storage;
+	}
+	static constexpr size_t size() noexcept {
+		return sizeof...(Chars);
+	}
+	static constexpr bool empty() noexcept {
+		return sizeof...(Chars) == 0;
+	}
+	static constexpr std::string_view view() noexcept {
+		return std::string_view{storage, sizeof...(Chars)};
+	}
+	constexpr operator std::string_view() const noexcept {
+		return view();
+	}
+	template <auto... Rhs> constexpr bool operator==(text<Rhs...>) const noexcept {
+		return view() == text<Rhs...>::view();
+	}
+	friend constexpr bool operator==(text, std::string_view rhs) noexcept {
+		return view() == rhs;
+	}
+	friend constexpr bool operator==(std::string_view lhs, text) noexcept {
+		return lhs == view();
+	}
+#if __cplusplus < 202002L
+	template <auto... Rhs> constexpr bool operator!=(text<Rhs...>) const noexcept {
+		return view() != text<Rhs...>::view();
+	}
+	friend constexpr bool operator!=(text, std::string_view rhs) noexcept {
+		return view() != rhs;
+	}
+	friend constexpr bool operator!=(std::string_view lhs, text) noexcept {
+		return lhs != view();
+	}
+#endif
+};
+
+} // namespace ctlark
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// The type-level AST of a Lark grammar, built by the semantic actions
+// (actions.hpp) while CTLL parses the grammar text. Each node knows how
+// to lower itself into the flat constexpr expression program that
+// compile.hpp works with: emit(builder) appends nodes and returns the
+// index of the root it created. The builder is duck-typed (see
+// compile.hpp for the real one) so this header stays independent.
+
+namespace ctlark::ast {
+
+// flat program node kinds
+enum class pk : unsigned char {
+	seq,       // children in order
+	alt,       // children are alternatives
+	star,      // one child, zero or more
+	plus,      // one child, one or more
+	opt,       // one child, zero or one
+	rep,       // one child, a=min, b=max (-1 = unbounded)
+	chr,       // a = the character
+	range,     // a = low, b = high
+	any,       // any character (except newline, unless dotall)
+	str,       // literal string: a = pool offset, b = length
+	cls,       // character class, a = 1 if negated, children are members
+	cw,        // \w   word character
+	cd,        // \d   digit
+	cs,        // \s   whitespace
+	cnw,       // \W
+	cnd,       // \D
+	cns,       // \S
+	rref,      // rule reference, a = symbol id
+	tref,      // terminal reference, a = symbol id
+	ci,        // one child, match case-insensitively
+	dotall,    // one child, any also matches newline
+	rx         // one child, provenance: came from a /regex/ literal
+};
+
+// --- expression nodes
+
+template <typename... Es> struct seq {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::seq);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename... Es> struct alt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::alt);
+		int last = -1;
+		((last = b.link(self, last, Es::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename E> struct star {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::star);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct plus {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::plus);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct opt {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::opt);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E, int Min, int Max> struct rep {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rep, Min, Max);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <auto C> struct chr {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::chr, static_cast<int>(C));
+	}
+};
+
+template <auto Lo, auto Hi> struct crange {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::range, static_cast<int>(Lo), static_cast<int>(Hi));
+	}
+};
+
+struct any_char {
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add(pk::any);
+	}
+};
+
+template <typename Text, bool Ci> struct lit {
+	using text_type = Text;
+	static constexpr bool case_insensitive = Ci;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_str(Text::view(), Ci);
+	}
+};
+
+struct word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cw); }
+};
+struct digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cd); }
+};
+struct space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cs); }
+};
+struct not_word_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnw); }
+};
+struct not_digit_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cnd); }
+};
+struct not_space_class {
+	template <typename B> static constexpr int emit(B & b) { return b.add(pk::cns); }
+};
+
+template <bool Neg, typename... Members> struct cls {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::cls, Neg ? 1 : 0);
+		int last = -1;
+		((last = b.link(self, last, Members::emit(b))), ...);
+		return self;
+	}
+};
+
+template <typename Name> struct rule_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), false);
+	}
+};
+
+template <typename Name> struct term_ref {
+	using name_type = Name;
+	template <typename B> static constexpr int emit(B & b) {
+		return b.add_ref(Name::view(), true);
+	}
+};
+
+template <typename E> struct ci {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::ci);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+template <typename E> struct dotall {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::dotall);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// provenance wrapper: this expression came from a /regex/ literal, so
+// in a rule body it is ONE anonymous terminal, not structure
+template <typename E> struct rx {
+	template <typename B> static constexpr int emit(B & b) {
+		const int self = b.add(pk::rx);
+		b.link(self, -1, E::emit(b));
+		return self;
+	}
+};
+
+// --- one alternative of a definition; Alias is void or a text
+
+template <typename Seq, typename Alias> struct branch { };
+
+namespace detail {
+
+template <typename Br> struct branch_parts;
+template <typename Seq, typename Alias> struct branch_parts<branch<Seq, Alias>> {
+	using seq = Seq;
+	using alias = Alias;
+	static constexpr bool aliased = !std::is_void_v<Alias>;
+	static constexpr std::string_view alias_view() noexcept {
+		if constexpr (aliased) {
+			return Alias::view();
+		} else {
+			return std::string_view{};
+		}
+	}
+};
+
+} // namespace detail
+
+// --- top-level items
+
+template <typename Name, bool Bang, bool Cond, int Priority, typename... Branches> struct rule_def {
+	using name_type = Name;
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_rule(Name::view(), Bang, Cond, Priority);
+		(b.add_alternative(sym, detail::branch_parts<Branches>::seq::emit(b),
+		                   detail::branch_parts<Branches>::alias_view()), ...);
+	}
+};
+
+template <typename Name, int Priority, typename... Branches> struct term_def {
+	using name_type = Name;
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in terminal definitions");
+	template <typename B> static constexpr void collect(B & b) {
+		const int sym = b.def_term(Name::view(), Priority);
+		(b.add_term_alternative(sym, detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+template <typename... Branches> struct ignore_def {
+	static_assert((!detail::branch_parts<Branches>::aliased && ...),
+	              "ctlark: aliases (->) are not allowed in %ignore");
+	template <typename B> static constexpr void collect(B & b) {
+		(b.add_ignore(detail::branch_parts<Branches>::seq::emit(b)), ...);
+	}
+};
+
+// %import path -> alias (or the same name); Segs are the path segments
+template <typename Alias, typename... Segs> struct import_def {
+	template <typename B> static constexpr void collect(B & b) {
+		constexpr size_t n = sizeof...(Segs);
+		static_assert(n >= 2, "ctlark: %import needs a dotted path (only common.* is supported)");
+		const std::string_view segs[]{Segs::view()...};
+		b.import_builtin(segs, n, Alias::view());
+	}
+};
+
+// the whole grammar, in source order
+template <typename... Items> struct grammar {
+	static constexpr size_t item_count = sizeof...(Items);
+	template <typename B> static constexpr void collect(B & b) {
+		(Items::collect(b), ...);
+	}
+};
+
+} // namespace ctlark::ast
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <string_view>
+#endif
+
+// The supported subset of lark's common.lark, embedded as grammar AST
+// snippets: %import common.X emits the matching pattern and defines it
+// as a terminal. Everything here is self-contained (no references), so
+// imports cannot recurse.
+
+namespace ctlark::detail {
+
+namespace builtin {
+
+using namespace ctlark::ast;
+
+using u_digit = crange<'0', '9'>;
+using u_lcase = crange<'a', 'z'>;
+using u_ucase = crange<'A', 'Z'>;
+using u_letter = cls<false, u_lcase, u_ucase>;
+using u_sign = opt<cls<false, chr<'+'>, chr<'-'>>>;
+
+using DIGIT = u_digit;
+using HEXDIGIT = cls<false, u_digit, crange<'a', 'f'>, crange<'A', 'F'>>;
+using INT = plus<u_digit>;
+using SIGNED_INT = seq<u_sign, INT>;
+// INT "." INT? | "." INT
+using DECIMAL = alt<seq<INT, chr<'.'>, opt<INT>>, seq<chr<'.'>, INT>>;
+using u_exp = seq<cls<false, chr<'e'>, chr<'E'>>, u_sign, INT>;
+using FLOAT = alt<seq<INT, u_exp>, seq<DECIMAL, opt<u_exp>>>;
+using SIGNED_FLOAT = seq<u_sign, FLOAT>;
+using NUMBER = alt<FLOAT, INT>;
+using SIGNED_NUMBER = seq<u_sign, NUMBER>;
+
+// "..." with backslash escapes, single line
+using ESCAPED_STRING = seq<
+	chr<'"'>,
+	star<alt<seq<chr<'\\'>, any_char>,
+	         cls<true, chr<'"'>, chr<'\\'>, chr<'\x0A'>>>>,
+	chr<'"'>>;
+
+using LCASE_LETTER = u_lcase;
+using UCASE_LETTER = u_ucase;
+using LETTER = u_letter;
+using WORD = plus<u_letter>;
+using CNAME = seq<cls<false, chr<'_'>, u_lcase, u_ucase>,
+                  star<cls<false, chr<'_'>, u_lcase, u_ucase, u_digit>>>;
+
+using WS_INLINE = plus<cls<false, chr<' '>, chr<'\x09'>>>;
+using WS = plus<space_class>;
+using CR = chr<'\x0D'>;
+using LF = chr<'\x0A'>;
+using NEWLINE = plus<seq<opt<CR>, LF>>;
+
+using SH_COMMENT = seq<chr<'#'>, star<cls<true, chr<'\x0A'>>>>;
+using CPP_COMMENT = seq<chr<'/'>, chr<'/'>, star<cls<true, chr<'\x0A'>>>>;
+// /* ([^*] | *+[^*/])* *+ /
+using C_COMMENT = seq<
+	chr<'/'>, chr<'*'>,
+	star<alt<cls<true, chr<'*'>>,
+	         seq<plus<chr<'*'>>, cls<true, chr<'*'>, chr<'/'>>>>>,
+	plus<chr<'*'>>, chr<'/'>>;
+using SQL_COMMENT = seq<chr<'-'>, chr<'-'>, star<cls<true, chr<'\x0A'>>>>;
+
+} // namespace builtin
+
+// emit the named builtin into the builder; returns the root node id or
+// -1 when the name is not a supported common.lark terminal
+template <typename B> constexpr int emit_common(std::string_view name, B & b) {
+	if (name == "DIGIT") { return builtin::DIGIT::emit(b); }
+	if (name == "HEXDIGIT") { return builtin::HEXDIGIT::emit(b); }
+	if (name == "INT") { return builtin::INT::emit(b); }
+	if (name == "SIGNED_INT") { return builtin::SIGNED_INT::emit(b); }
+	if (name == "DECIMAL") { return builtin::DECIMAL::emit(b); }
+	if (name == "FLOAT") { return builtin::FLOAT::emit(b); }
+	if (name == "SIGNED_FLOAT") { return builtin::SIGNED_FLOAT::emit(b); }
+	if (name == "NUMBER") { return builtin::NUMBER::emit(b); }
+	if (name == "SIGNED_NUMBER") { return builtin::SIGNED_NUMBER::emit(b); }
+	if (name == "ESCAPED_STRING") { return builtin::ESCAPED_STRING::emit(b); }
+	if (name == "LCASE_LETTER") { return builtin::LCASE_LETTER::emit(b); }
+	if (name == "UCASE_LETTER") { return builtin::UCASE_LETTER::emit(b); }
+	if (name == "LETTER") { return builtin::LETTER::emit(b); }
+	if (name == "WORD") { return builtin::WORD::emit(b); }
+	if (name == "CNAME") { return builtin::CNAME::emit(b); }
+	if (name == "WS_INLINE") { return builtin::WS_INLINE::emit(b); }
+	if (name == "WS") { return builtin::WS::emit(b); }
+	if (name == "CR") { return builtin::CR::emit(b); }
+	if (name == "LF") { return builtin::LF::emit(b); }
+	if (name == "NEWLINE") { return builtin::NEWLINE::emit(b); }
+	if (name == "SH_COMMENT") { return builtin::SH_COMMENT::emit(b); }
+	if (name == "CPP_COMMENT") { return builtin::CPP_COMMENT::emit(b); }
+	if (name == "C_COMMENT") { return builtin::C_COMMENT::emit(b); }
+	if (name == "SQL_COMMENT") { return builtin::SQL_COMMENT::emit(b); }
+	return -1;
+}
+
+} // namespace ctlark::detail
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <cstdint>
+#include <string_view>
+#endif
+
+// Lowering the type-level grammar AST into constexpr tables:
+//
+//   * symbols (rules and terminals) interned by name; string literals
+//     in rule bodies become keyword terminals (merged with an existing
+//     terminal defined as the same literal), regexes and ranges become
+//     anonymous pattern terminals
+//   * quantifiers, groups and alternations inside rule bodies are
+//     desugared into synthetic helper rules marked splice, so the
+//     productions Earley sees are a plain CFG
+//   * every terminal pattern is compiled to a Thompson NFA over bytes
+//     (edges carry 256-bit masks), with terminal-in-terminal
+//     references inlined and case-insensitivity/dotall propagated
+//   * nullability is computed for the Aycock-Horspool Earley fix
+//
+// Everything is plain constexpr evaluation - by the time Earley runs
+// (earley.hpp) the grammar is data, not types. Errors set ok=false
+// and a static message; the entry points static_assert on ok.
+
+namespace ctlark::detail {
+
+using ast::pk;
+
+// capacities, derived from the grammar text length
+template <size_t N> struct climits {
+	static constexpr int nodes = static_cast<int>(4 * N + 320);
+	static constexpr int pool = static_cast<int>(4 * N + 512);
+	static constexpr int syms = static_cast<int>(N + 64);
+	static constexpr int alts = static_cast<int>(N + 32);
+	static constexpr int prods = static_cast<int>(4 * N + 64);
+	static constexpr int rhs = static_cast<int>(8 * N + 128);
+	static constexpr int states = static_cast<int>(16 * N + 1024);
+	static constexpr int edges = static_cast<int>(16 * N + 1024);
+	static constexpr int ignores = 64;
+	static constexpr int max_rhs_len = 128;
+	static constexpr int max_depth = 64;
+};
+
+struct cnode {
+	pk kind;
+	int a;
+	int b;
+	int child;
+	int sib;
+};
+
+struct csym {
+	int name_off;
+	int name_len;
+	bool terminal;
+	bool defined;
+	bool ignored;
+	bool keyword;   // anonymous string literal from a rule body
+	bool anon;      // anonymous pattern terminal
+	bool ci;        // keyword literal with the i flag
+	int lit_off;    // keyword content, for merging (-1 otherwise)
+	int lit_len;
+	int prio;
+	int pattern;    // terminals: root node id (-1 = not defined)
+	bool bang;      // rules: ! keep all tokens
+	bool cond;      // rules: ? inline when a single child
+	bool inlined;   // rules: name starts with _
+	bool splice;    // rules: synthetic helper, always splice children
+	int nfa_start;
+	int nfa_accept;
+};
+
+struct calt {
+	int sym;
+	int root;
+	int alias_off;
+	int alias_len;
+};
+
+struct cprod {
+	int lhs;
+	int rhs_off;
+	int rhs_len;
+	int alias_off;
+	int alias_len;
+};
+
+// a 256-bit byte set
+struct mask256 {
+	std::uint64_t w[4]{};
+	constexpr void set(int c) noexcept {
+		w[(c & 0xFF) >> 6] |= (std::uint64_t{1} << (c & 63));
+	}
+	constexpr bool get(int c) const noexcept {
+		return (w[(c & 0xFF) >> 6] >> (c & 63)) & 1;
+	}
+	constexpr void set_range(int lo, int hi) noexcept {
+		for (int c = lo; c <= hi && c <= 0xFF; ++c) { set(c); }
+	}
+	constexpr void invert() noexcept {
+		for (auto & x : w) { x = ~x; }
+	}
+	constexpr void merge(const mask256 & o) noexcept {
+		for (int i = 0; i < 4; ++i) { w[i] |= o.w[i]; }
+	}
+	// close under ASCII case flipping
+	constexpr void ci_close() noexcept {
+		for (int c = 'a'; c <= 'z'; ++c) {
+			if (get(c)) { set(c - 32); }
+		}
+		for (int c = 'A'; c <= 'Z'; ++c) {
+			if (get(c)) { set(c + 32); }
+		}
+	}
+};
+
+constexpr mask256 mask_digit() noexcept {
+	mask256 m{};
+	m.set_range('0', '9');
+	return m;
+}
+constexpr mask256 mask_word() noexcept {
+	mask256 m = mask_digit();
+	m.set_range('a', 'z');
+	m.set_range('A', 'Z');
+	m.set('_');
+	return m;
+}
+constexpr mask256 mask_space() noexcept {
+	mask256 m{};
+	m.set(' ');
+	m.set_range(0x09, 0x0D); // \t \n \v \f \r
+	return m;
+}
+constexpr mask256 mask_not(mask256 m) noexcept {
+	m.invert();
+	return m;
+}
+
+struct cedge {
+	int to;
+	bool eps;
+	mask256 mask;
+	int next; // next edge of the same state
+};
+
+struct nfa_frag {
+	int in;
+	int out;
+};
+
+// punctuation names for anonymous keyword terminals (lark-style)
+constexpr std::string_view punct_name(char c) noexcept {
+	switch (c) {
+		case '+': return "PLUS";
+		case '-': return "MINUS";
+		case '*': return "STAR";
+		case '/': return "SLASH";
+		case '\\': return "BACKSLASH";
+		case '(': return "LPAR";
+		case ')': return "RPAR";
+		case '[': return "LSQB";
+		case ']': return "RSQB";
+		case '{': return "LBRACE";
+		case '}': return "RBRACE";
+		case ',': return "COMMA";
+		case ';': return "SEMICOLON";
+		case ':': return "COLON";
+		case '=': return "EQUAL";
+		case '.': return "DOT";
+		case '!': return "BANG";
+		case '?': return "QMARK";
+		case '<': return "LESSTHAN";
+		case '>': return "MORETHAN";
+		case '|': return "VBAR";
+		case '&': return "AMPERSAND";
+		case '^': return "CIRCUMFLEX";
+		case '%': return "PERCENT";
+		case '~': return "TILDE";
+		case '@': return "AT";
+		case '#': return "HASH";
+		case '$': return "DOLLAR";
+		case '"': return "DBLQUOTE";
+		case '\'': return "QUOTE";
+		case '`': return "BACKQUOTE";
+		default: return "";
+	}
+}
+
+template <size_t N> struct grammar_tables {
+	using lim = climits<N>;
+
+	bool ok = true;
+	char error[128]{};
+
+	cnode nodes[static_cast<size_t>(lim::nodes)]{};
+	int node_count = 0;
+
+	char pool[static_cast<size_t>(lim::pool)]{};
+	int pool_count = 0;
+
+	csym syms[static_cast<size_t>(lim::syms)]{};
+	int sym_count = 0;
+
+	calt alts[static_cast<size_t>(lim::alts)]{};
+	int alt_count = 0;
+
+	int ignore_roots[static_cast<size_t>(lim::ignores)]{};
+	int ignore_count = 0;
+
+	cprod prods[static_cast<size_t>(lim::prods)]{};
+	int prod_count = 0;
+	int rhs_pool[static_cast<size_t>(lim::rhs)]{};
+	int rhs_count = 0;
+
+	int state_first_edge[static_cast<size_t>(lim::states)]{};
+	int state_count = 0;
+	cedge edges[static_cast<size_t>(lim::edges)]{};
+	int edge_count = 0;
+
+	bool nullable[static_cast<size_t>(lim::syms)]{};
+	int anon_counter = 0;
+	int helper_counter = 0;
+
+	// --- error handling
+
+	constexpr void fail(std::string_view msg) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		for (; i < msg.size() && i + 1 < sizeof(error); ++i) { error[i] = msg[i]; }
+		error[i] = '\0';
+	}
+	// the same, naming the offending symbol: "<msg> '<subject>'"
+	constexpr void fail(std::string_view msg, std::string_view subject) noexcept {
+		if (!ok) { return; }
+		ok = false;
+		size_t i = 0;
+		const auto append = [&](std::string_view s) {
+			for (size_t k = 0; k < s.size() && i + 1 < sizeof(error); ++k) { error[i++] = s[k]; }
+		};
+		append(msg);
+		append(" '");
+		append(subject);
+		append("'");
+		error[i] = '\0';
+	}
+	constexpr std::string_view error_view() const noexcept {
+		size_t n = 0;
+		while (n < sizeof(error) && error[n] != '\0') { ++n; }
+		return std::string_view{error, n};
+	}
+
+	// --- pools
+
+	constexpr int pool_add(std::string_view s) noexcept {
+		if (pool_count + static_cast<int>(s.size()) > lim::pool) {
+			fail("ctlark: grammar too large (string pool)");
+			return 0;
+		}
+		const int off = pool_count;
+		for (const char c : s) { pool[static_cast<size_t>(pool_count++)] = c; }
+		return off;
+	}
+	constexpr std::string_view pool_view(int off, int len) const noexcept {
+		return std::string_view{pool + off, static_cast<size_t>(len)};
+	}
+	constexpr std::string_view name_of(int sym) const noexcept {
+		return pool_view(syms[sym].name_off, syms[sym].name_len);
+	}
+
+	// --- AST emission interface (called by ast::* nodes)
+
+	constexpr int add(pk kind, int a = 0, int b = 0) noexcept {
+		if (node_count >= lim::nodes) {
+			fail("ctlark: grammar too large (node pool)");
+			return 0;
+		}
+		nodes[node_count] = cnode{kind, a, b, -1, -1};
+		return node_count++;
+	}
+	constexpr int link(int parent, int last, int child) noexcept {
+		if (!ok) { return child; }
+		if (last < 0) {
+			nodes[parent].child = child;
+		} else {
+			nodes[last].sib = child;
+		}
+		return child;
+	}
+	constexpr int add_str(std::string_view s, bool ci) noexcept {
+		const int off = pool_add(s);
+		const int n = add(pk::str, off, static_cast<int>(s.size()));
+		if (ci) {
+			const int w = add(pk::ci);
+			if (ok) { nodes[w].child = n; }
+			return w;
+		}
+		return n;
+	}
+	constexpr int intern(std::string_view name, bool terminal) noexcept {
+		for (int i = 0; i < sym_count; ++i) {
+			if (syms[i].terminal == terminal && name_of(i) == name) { return i; }
+		}
+		if (sym_count >= lim::syms) {
+			fail("ctlark: grammar too large (symbols)");
+			return 0;
+		}
+		csym s{};
+		s.name_off = pool_add(name);
+		s.name_len = static_cast<int>(name.size());
+		s.terminal = terminal;
+		s.lit_off = -1;
+		s.lit_len = 0;
+		s.pattern = -1;
+		s.nfa_start = -1;
+		s.nfa_accept = -1;
+		s.inlined = !terminal && !name.empty() && name[0] == '_';
+		syms[sym_count] = s;
+		return sym_count++;
+	}
+	constexpr int add_ref(std::string_view name, bool terminal) noexcept {
+		return add(terminal ? pk::tref : pk::rref, intern(name, terminal));
+	}
+	constexpr int def_rule(std::string_view name, bool bang, bool cond, int prio) noexcept {
+		const int s = intern(name, false);
+		if (syms[s].defined) { fail("ctlark: duplicate rule definition", name); }
+		syms[s].defined = true;
+		syms[s].bang = bang;
+		syms[s].cond = cond;
+		syms[s].prio = prio;
+		return s;
+	}
+	constexpr int def_term(std::string_view name, int prio) noexcept {
+		const int s = intern(name, true);
+		if (syms[s].defined) { fail("ctlark: duplicate terminal definition", name); }
+		syms[s].defined = true;
+		syms[s].prio = prio;
+		return s;
+	}
+	constexpr void add_alternative(int sym, int root, std::string_view alias) noexcept {
+		if (alt_count >= lim::alts) {
+			fail("ctlark: grammar too large (alternatives)");
+			return;
+		}
+		const int aoff = alias.empty() ? -1 : pool_add(alias);
+		alts[alt_count++] = calt{sym, root, aoff, static_cast<int>(alias.size())};
+	}
+	constexpr void add_term_alternative(int sym, int root) noexcept {
+		if (!ok) { return; }
+		if (syms[sym].pattern < 0) {
+			syms[sym].pattern = root;
+			return;
+		}
+		// further alternatives merge under an alt node
+		const int existing = syms[sym].pattern;
+		if (nodes[existing].kind == pk::alt) {
+			int last = nodes[existing].child;
+			while (last >= 0 && nodes[last].sib >= 0) { last = nodes[last].sib; }
+			nodes[last].sib = root;
+		} else {
+			const int a = add(pk::alt);
+			if (!ok) { return; }
+			nodes[a].child = existing;
+			nodes[existing].sib = root;
+			syms[sym].pattern = a;
+		}
+	}
+	constexpr void add_ignore(int root) noexcept {
+		if (ignore_count >= lim::ignores) {
+			fail("ctlark: too many %ignore statements");
+			return;
+		}
+		ignore_roots[ignore_count++] = root;
+	}
+	constexpr void import_builtin(const std::string_view * segs, size_t n, std::string_view alias) noexcept {
+		if (n != 2 || segs[0] != "common") {
+			fail("ctlark: %import supports only common.<NAME>");
+			return;
+		}
+		const int root = emit_common(segs[1], *this);
+		if (root < 0) {
+			fail("ctlark: %import: not a supported common.* terminal", segs[1]);
+			return;
+		}
+		const int s = intern(alias, true);
+		if (syms[s].defined) {
+			fail("ctlark: duplicate terminal definition (%import)", alias);
+			return;
+		}
+		syms[s].defined = true;
+		syms[s].pattern = root;
+	}
+
+	// --- lowering rule bodies to productions
+
+	struct rhs_buf {
+		int ids[static_cast<size_t>(lim::max_rhs_len)]{};
+		int len = 0;
+	};
+
+	constexpr void buf_push(rhs_buf & b, int sym) noexcept {
+		if (b.len >= lim::max_rhs_len) {
+			fail("ctlark: rule alternative too long");
+			return;
+		}
+		b.ids[b.len++] = sym;
+	}
+
+	constexpr void add_prod(int lhs, const rhs_buf & b, int alias_off, int alias_len) noexcept {
+		if (prod_count >= lim::prods || rhs_count + b.len > lim::rhs) {
+			fail("ctlark: grammar too large (productions)");
+			return;
+		}
+		const int off = rhs_count;
+		for (int i = 0; i < b.len; ++i) { rhs_pool[rhs_count++] = b.ids[i]; }
+		prods[prod_count++] = cprod{lhs, off, b.len, alias_off, alias_len};
+	}
+
+	constexpr int new_helper() noexcept {
+		char name[16]{'_', '_', 'h'};
+		int len = 3;
+		int v = helper_counter++;
+		char digits[8]{};
+		int nd = 0;
+		do {
+			digits[nd++] = static_cast<char>('0' + v % 10);
+			v /= 10;
+		} while (v > 0);
+		while (nd > 0) { name[len++] = digits[--nd]; }
+		const int s = intern(std::string_view{name, static_cast<size_t>(len)}, false);
+		syms[s].defined = true;
+		syms[s].splice = true;
+		return s;
+	}
+
+	constexpr int new_anon_pattern(int root) noexcept {
+		char name[20]{'_', '_', 'a', 'n', 'o', 'n', '_'};
+		int len = 7;
+		int v = anon_counter++;
+		char digits[8]{};
+		int nd = 0;
+		do {
+			digits[nd++] = static_cast<char>('0' + v % 10);
+			v /= 10;
+		} while (v > 0);
+		while (nd > 0) { name[len++] = digits[--nd]; }
+		const int s = intern(std::string_view{name, static_cast<size_t>(len)}, true);
+		syms[s].defined = true;
+		syms[s].anon = true;
+		syms[s].pattern = root;
+		return s;
+	}
+
+	// a keyword terminal for a string literal in a rule body; merged
+	// with an existing identical keyword, or with a defined terminal
+	// whose whole pattern is the same literal
+	constexpr int keyword_sym(int str_node, bool ci) noexcept {
+		const int off = nodes[str_node].a;
+		const int len = nodes[str_node].b;
+		const std::string_view content = pool_view(off, len);
+		for (int i = 0; i < sym_count; ++i) {
+			if (!syms[i].terminal) { continue; }
+			if (syms[i].keyword && syms[i].ci == ci && pool_view(syms[i].lit_off, syms[i].lit_len) == content) {
+				return i;
+			}
+			// a user terminal defined as exactly this literal
+			if (syms[i].defined && !syms[i].keyword && syms[i].pattern >= 0) {
+				int p = syms[i].pattern;
+				bool pci = false;
+				if (nodes[p].kind == pk::ci && nodes[p].child >= 0 && nodes[nodes[p].child].sib < 0) {
+					pci = true;
+					p = nodes[p].child;
+				}
+				// terminal bodies are seq-rooted; unwrap single-child seqs
+				while (nodes[p].kind == pk::seq && nodes[p].child >= 0 && nodes[nodes[p].child].sib < 0) {
+					p = nodes[p].child;
+					if (nodes[p].kind == pk::ci && nodes[p].child >= 0) {
+						pci = true;
+						p = nodes[p].child;
+					}
+				}
+				if (nodes[p].kind == pk::str && pci == ci && pool_view(nodes[p].a, nodes[p].b) == content) {
+					return i;
+				}
+			}
+		}
+		// name it like lark does: IF for word literals, PLUS for + ...
+		char name[64]{};
+		int nlen = 0;
+		bool wordy = !content.empty();
+		for (const char c : content) {
+			const bool w = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+			if (!w) { wordy = false; }
+		}
+		if (wordy && content.size() < 32 && !(content[0] >= '0' && content[0] <= '9')) {
+			for (const char c : content) {
+				name[nlen++] = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 32) : c;
+			}
+		} else if (!content.empty() && content.size() * 12 < 60) {
+			bool all_punct = true;
+			for (const char c : content) {
+				if (punct_name(c).empty()) { all_punct = false; }
+			}
+			if (all_punct) {
+				for (const char c : content) {
+					if (nlen > 0) { name[nlen++] = '_'; }
+					for (const char pc : punct_name(c)) { name[nlen++] = pc; }
+				}
+			}
+		}
+		if (nlen == 0) {
+			return finish_keyword(new_anon_pattern(str_node), str_node, ci);
+		}
+		// collision with an existing symbol name gets the anon treatment
+		for (int i = 0; i < sym_count; ++i) {
+			if (syms[i].terminal && name_of(i) == std::string_view{name, static_cast<size_t>(nlen)}) {
+				return finish_keyword(new_anon_pattern(str_node), str_node, ci);
+			}
+		}
+		const int s = intern(std::string_view{name, static_cast<size_t>(nlen)}, true);
+		syms[s].defined = true;
+		syms[s].pattern = ci ? wrap_ci(str_node) : str_node;
+		return finish_keyword(s, str_node, ci);
+	}
+
+	constexpr int wrap_ci(int node) noexcept {
+		const int w = add(pk::ci);
+		if (ok) { nodes[w].child = node; }
+		return w;
+	}
+
+	constexpr int finish_keyword(int s, int str_node, bool ci) noexcept {
+		syms[s].keyword = true;
+		syms[s].ci = ci;
+		syms[s].lit_off = nodes[str_node].a;
+		syms[s].lit_len = nodes[str_node].b;
+		if (syms[s].anon) { syms[s].pattern = ci ? wrap_ci(str_node) : str_node; }
+		return s;
+	}
+
+	// does this subtree contain a rule reference?
+	constexpr bool has_rref(int node, int depth = 0) const noexcept {
+		if (node < 0 || depth > lim::max_depth) { return false; }
+		if (nodes[node].kind == pk::rref) { return true; }
+		for (int c = nodes[node].child; c >= 0; c = nodes[c].sib) {
+			if (has_rref(c, depth + 1)) { return true; }
+		}
+		return false;
+	}
+
+	// lower one expression node into a symbol sequence
+	constexpr void lower_into(rhs_buf & out, int node, int depth) noexcept {
+		if (!ok) { return; }
+		if (depth > lim::max_depth) {
+			fail("ctlark: rule body too deeply nested");
+			return;
+		}
+		const cnode & n = nodes[node];
+		switch (n.kind) {
+			case pk::seq:
+				for (int c = n.child; c >= 0; c = nodes[c].sib) { lower_into(out, c, depth + 1); }
+				return;
+			case pk::rref:
+			case pk::tref:
+				buf_push(out, n.a);
+				return;
+			case pk::str:
+				buf_push(out, keyword_sym(node, false));
+				return;
+			case pk::ci:
+				if (n.child >= 0 && nodes[n.child].kind == pk::str) {
+					buf_push(out, keyword_sym(n.child, true));
+				} else {
+					buf_push(out, new_anon_pattern(node));
+				}
+				return;
+			case pk::rx:
+			case pk::dotall:
+			case pk::range:
+			case pk::any:
+			case pk::chr:
+			case pk::cls:
+			case pk::cw:
+			case pk::cd:
+			case pk::cs:
+			case pk::cnw:
+			case pk::cnd:
+			case pk::cns:
+				buf_push(out, new_anon_pattern(node));
+				return;
+			case pk::alt: {
+				const int h = new_helper();
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					rhs_buf t{};
+					lower_into(t, c, depth + 1);
+					add_prod(h, t, -1, 0);
+				}
+				buf_push(out, h);
+				return;
+			}
+			case pk::star: {
+				const int h = new_helper();
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				rhs_buf rec{};
+				buf_push(rec, h);
+				for (int i = 0; i < one.len; ++i) { buf_push(rec, one.ids[i]); }
+				add_prod(h, rec, -1, 0);
+				const rhs_buf empty{};
+				add_prod(h, empty, -1, 0);
+				buf_push(out, h);
+				return;
+			}
+			case pk::plus: {
+				const int h = new_helper();
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				rhs_buf rec{};
+				buf_push(rec, h);
+				for (int i = 0; i < one.len; ++i) { buf_push(rec, one.ids[i]); }
+				add_prod(h, rec, -1, 0);
+				add_prod(h, one, -1, 0);
+				buf_push(out, h);
+				return;
+			}
+			case pk::opt: {
+				const int h = new_helper();
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				add_prod(h, one, -1, 0);
+				const rhs_buf empty{};
+				add_prod(h, empty, -1, 0);
+				buf_push(out, h);
+				return;
+			}
+			case pk::rep: {
+				const int lo = n.a;
+				const int hi = n.b;
+				rhs_buf one{};
+				lower_into(one, n.child, depth + 1);
+				for (int k = 0; k < lo; ++k) {
+					for (int i = 0; i < one.len; ++i) { buf_push(out, one.ids[i]); }
+				}
+				if (hi < 0) {
+					// open repetition: a star helper
+					const int h = new_helper();
+					rhs_buf rec{};
+					buf_push(rec, h);
+					for (int i = 0; i < one.len; ++i) { buf_push(rec, one.ids[i]); }
+					add_prod(h, rec, -1, 0);
+					const rhs_buf empty{};
+					add_prod(h, empty, -1, 0);
+					buf_push(out, h);
+				} else if (hi > lo) {
+					const int h = new_helper();
+					add_prod(h, one, -1, 0);
+					const rhs_buf empty{};
+					add_prod(h, empty, -1, 0);
+					for (int k = lo; k < hi; ++k) { buf_push(out, h); }
+				}
+				return;
+			}
+		}
+		fail("ctlark: unexpected node in a rule body");
+	}
+
+	// --- %ignore resolution
+
+	constexpr void resolve_ignores() noexcept {
+		for (int i = 0; i < ignore_count && ok; ++i) {
+			int root = ignore_roots[i];
+			// unwrap single-child seqs
+			while (nodes[root].kind == pk::seq && nodes[root].child >= 0 && nodes[nodes[root].child].sib < 0) {
+				root = nodes[root].child;
+			}
+			if (nodes[root].kind == pk::tref) {
+				syms[nodes[root].a].ignored = true;
+				continue;
+			}
+			if (has_rref(root)) {
+				fail("ctlark: %ignore must be a terminal pattern");
+				return;
+			}
+			if (nodes[root].kind == pk::str) {
+				syms[keyword_sym(root, false)].ignored = true;
+			} else if (nodes[root].kind == pk::ci && nodes[root].child >= 0 && nodes[nodes[root].child].kind == pk::str) {
+				syms[keyword_sym(nodes[root].child, true)].ignored = true;
+			} else {
+				syms[new_anon_pattern(root)].ignored = true;
+			}
+		}
+	}
+
+	// --- NFA construction
+
+	constexpr int new_state() noexcept {
+		if (state_count >= lim::states) {
+			fail("ctlark: terminal patterns too large (states)");
+			return 0;
+		}
+		state_first_edge[state_count] = -1;
+		return state_count++;
+	}
+	constexpr void add_edge(int from, int to, bool eps, mask256 mask = {}) noexcept {
+		if (edge_count >= lim::edges) {
+			fail("ctlark: terminal patterns too large (edges)");
+			return;
+		}
+		edges[edge_count] = cedge{to, eps, mask, state_first_edge[from]};
+		state_first_edge[from] = edge_count++;
+	}
+
+	constexpr mask256 member_mask(int node, bool ci) const noexcept {
+		mask256 m{};
+		const cnode & n = nodes[node];
+		switch (n.kind) {
+			case pk::chr: m.set(n.a); break;
+			case pk::range: m.set_range(n.a, n.b); break;
+			case pk::cw: m = mask_word(); break;
+			case pk::cd: m = mask_digit(); break;
+			case pk::cs: m = mask_space(); break;
+			case pk::cnw: m = mask_not(mask_word()); break;
+			case pk::cnd: m = mask_not(mask_digit()); break;
+			case pk::cns: m = mask_not(mask_space()); break;
+			default: break;
+		}
+		if (ci) { m.ci_close(); }
+		return m;
+	}
+
+	constexpr nfa_frag char_frag(mask256 m) noexcept {
+		const int in = new_state();
+		const int out = new_state();
+		add_edge(in, out, false, m);
+		return nfa_frag{in, out};
+	}
+
+	constexpr nfa_frag emit_nfa(int node, bool ci, bool dot, int depth) noexcept {
+		if (!ok) { return nfa_frag{0, 0}; }
+		if (depth > lim::max_depth) {
+			fail("ctlark: terminal pattern too deep (recursive terminals are not supported)");
+			return nfa_frag{0, 0};
+		}
+		const cnode & n = nodes[node];
+		switch (n.kind) {
+			case pk::seq: {
+				nfa_frag f{new_state(), -1};
+				f.out = f.in;
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					const nfa_frag g = emit_nfa(c, ci, dot, depth + 1);
+					add_edge(f.out, g.in, true);
+					f.out = g.out;
+				}
+				return f;
+			}
+			case pk::alt: {
+				const int in = new_state();
+				const int out = new_state();
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					const nfa_frag g = emit_nfa(c, ci, dot, depth + 1);
+					add_edge(in, g.in, true);
+					add_edge(g.out, out, true);
+				}
+				return nfa_frag{in, out};
+			}
+			case pk::star: {
+				const int in = new_state();
+				const int out = new_state();
+				const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+				add_edge(in, g.in, true);
+				add_edge(in, out, true);
+				add_edge(g.out, g.in, true);
+				add_edge(g.out, out, true);
+				return nfa_frag{in, out};
+			}
+			case pk::plus: {
+				const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+				add_edge(g.out, g.in, true);
+				return g;
+			}
+			case pk::opt: {
+				const int in = new_state();
+				const int out = new_state();
+				const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+				add_edge(in, g.in, true);
+				add_edge(in, out, true);
+				add_edge(g.out, out, true);
+				return nfa_frag{in, out};
+			}
+			case pk::rep: {
+				const int lo = n.a;
+				const int hi = n.b;
+				nfa_frag f{new_state(), -1};
+				f.out = f.in;
+				for (int k = 0; k < lo; ++k) {
+					const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+					add_edge(f.out, g.in, true);
+					f.out = g.out;
+				}
+				if (hi < 0) {
+					const int in2 = new_state();
+					const int out2 = new_state();
+					const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+					add_edge(f.out, in2, true);
+					add_edge(in2, g.in, true);
+					add_edge(in2, out2, true);
+					add_edge(g.out, g.in, true);
+					add_edge(g.out, out2, true);
+					f.out = out2;
+				} else {
+					for (int k = lo; k < hi; ++k) {
+						const int in2 = new_state();
+						const int out2 = new_state();
+						const nfa_frag g = emit_nfa(n.child, ci, dot, depth + 1);
+						add_edge(f.out, in2, true);
+						add_edge(in2, g.in, true);
+						add_edge(in2, out2, true);
+						add_edge(g.out, out2, true);
+						f.out = out2;
+					}
+				}
+				return f;
+			}
+			case pk::chr:
+			case pk::range:
+			case pk::cw:
+			case pk::cd:
+			case pk::cs:
+			case pk::cnw:
+			case pk::cnd:
+			case pk::cns:
+				return char_frag(member_mask(node, ci));
+			case pk::any: {
+				mask256 m{};
+				m.invert();
+				if (!dot) {
+					mask256 nl{};
+					nl.set(0x0A);
+					nl.invert();
+					for (int i = 0; i < 4; ++i) { m.w[i] &= nl.w[i]; }
+				}
+				return char_frag(m);
+			}
+			case pk::str: {
+				nfa_frag f{new_state(), -1};
+				f.out = f.in;
+				const std::string_view s = pool_view(n.a, n.b);
+				for (const char c : s) {
+					mask256 m{};
+					m.set(static_cast<unsigned char>(c));
+					if (ci) { m.ci_close(); }
+					const int to = new_state();
+					add_edge(f.out, to, false, m);
+					f.out = to;
+				}
+				return f;
+			}
+			case pk::cls: {
+				mask256 m{};
+				for (int c = n.child; c >= 0; c = nodes[c].sib) {
+					m.merge(member_mask(c, false));
+				}
+				// case closure applies to the MEMBERS, then negation
+				// complements the closed set: [^a]i excludes both a
+				// and A (closing after inverting would instead ADD the
+				// flipped cases to the matches)
+				if (ci) { m.ci_close(); }
+				if (n.a) { m.invert(); }
+				return char_frag(m);
+			}
+			case pk::ci:
+				return emit_nfa(n.child, true, dot, depth + 1);
+			case pk::dotall:
+				return emit_nfa(n.child, ci, true, depth + 1);
+			case pk::rx:
+				return emit_nfa(n.child, ci, dot, depth + 1);
+			case pk::tref: {
+				const int t = n.a;
+				if (syms[t].pattern < 0) {
+					fail("ctlark: reference to an undefined terminal", name_of(t));
+					return nfa_frag{0, 0};
+				}
+				return emit_nfa(syms[t].pattern, ci, dot, depth + 1);
+			}
+			case pk::rref:
+				fail("ctlark: rule reference inside a terminal");
+				return nfa_frag{0, 0};
+		}
+		fail("ctlark: unexpected node in a terminal pattern");
+		return nfa_frag{0, 0};
+	}
+
+	constexpr void build_term_nfa(int s) noexcept {
+		if (!ok || syms[s].pattern < 0) { return; }
+		const nfa_frag f = emit_nfa(syms[s].pattern, false, false, 0);
+		syms[s].nfa_start = f.in;
+		syms[s].nfa_accept = f.out;
+	}
+
+	// --- checks and closures
+
+	constexpr void validate() noexcept {
+		for (int i = 0; i < sym_count && ok; ++i) {
+			if (syms[i].terminal) {
+				if (syms[i].pattern < 0) { fail("ctlark: reference to an undefined terminal", name_of(i)); }
+			} else {
+				if (!syms[i].defined) { fail("ctlark: reference to an undefined rule", name_of(i)); }
+			}
+		}
+	}
+
+	constexpr void compute_nullable() noexcept {
+		bool changed = true;
+		while (changed) {
+			changed = false;
+			for (int p = 0; p < prod_count; ++p) {
+				if (nullable[prods[p].lhs]) { continue; }
+				bool all = true;
+				for (int i = 0; i < prods[p].rhs_len; ++i) {
+					const int s = rhs_pool[prods[p].rhs_off + i];
+					if (syms[s].terminal || !nullable[s]) {
+						all = false;
+						break;
+					}
+				}
+				if (all) {
+					nullable[prods[p].lhs] = true;
+					changed = true;
+				}
+			}
+		}
+	}
+
+	constexpr int find_rule(std::string_view name) const noexcept {
+		for (int i = 0; i < sym_count; ++i) {
+			if (!syms[i].terminal && name_of(i) == name) { return i; }
+		}
+		return -1;
+	}
+
+	// --- the driver
+
+	constexpr void finish() noexcept {
+		if (!ok) { return; }
+		resolve_ignores();
+		const int n_alts = alt_count; // helpers do not add alts
+		for (int i = 0; i < n_alts && ok; ++i) {
+			rhs_buf b{};
+			lower_into(b, alts[i].root, 0);
+			add_prod(alts[i].sym, b, alts[i].alias_off, alts[i].alias_len);
+		}
+		for (int s = 0; s < sym_count && ok; ++s) {
+			if (syms[s].terminal) { build_term_nfa(s); }
+		}
+		validate();
+		compute_nullable();
+	}
+
+	// should this terminal's tokens be dropped from trees by default?
+	constexpr bool filtered(int s) const noexcept {
+		return syms[s].keyword || syms[s].anon
+		    || (syms[s].name_len > 0 && pool[syms[s].name_off] == '_');
+	}
+};
+
+// build the tables from a type-level grammar AST
+template <typename Ast, size_t N> constexpr auto compile_tables() noexcept {
+	grammar_tables<N> g{};
+	Ast::collect(g);
+	g.finish();
+	return g;
+}
+
+} // namespace ctlark::detail
+
+#endif
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <string_view>
+#endif
+
+// The compile-time parsing pipeline over the lowered grammar tables:
+//
+//   1. lexer: all terminal NFAs simulated together, longest match wins
+//      (ties: explicit priority, then literals over patterns, then
+//      definition order); %ignore'd terminals are dropped
+//   2. Earley over the token stream - handles every context-free
+//      grammar, including left recursion and ambiguity, with the
+//      Aycock-Horspool nullable fix
+//   3. derivation extraction with lark's tree shaping: helper rules
+//      from desugaring and _rules splice, ?rules inline when they have
+//      a single child, anonymous/keyword/_TERMINAL tokens are filtered
+//      (kept under !rules), -> aliases rename
+//
+// The result is a flat constexpr node array that lift.hpp raises into
+// Tree/Token types. Ambiguous derivations are resolved
+// deterministically: first-listed alternative, then longest-first
+// splits.
+
+namespace ctlark::detail {
+
+enum class perr : unsigned char {
+	none,
+	lex,       // no terminal matches at err_pos
+	parse,     // the token stream does not derive from the start rule
+	overflow,  // an internal pool was exhausted
+	depth      // derivation recursion limit (cyclic nullable rules)
+};
+
+struct eitem {
+	int prod;
+	int dot;
+	int origin;
+};
+
+// one node of the extracted parse tree; names and values are spans
+// into the grammar's string pool and the input, respectively
+struct rnode {
+	bool is_token;
+	int name_off;
+	int name_len;
+	int val_off;    // tokens: value span in the input
+	int val_len;
+	int child_off;  // trees: children in parse_result::children
+	int child_count;
+};
+
+// how many expected terminals a failure records (the true count is
+// kept separately so a diagnostic can say "... and N more")
+inline constexpr int expected_cap = 12;
+
+template <size_t M> struct parse_result {
+	static constexpr int node_cap = static_cast<int>(8 * (M + 2) + 128);
+	static constexpr int child_cap = static_cast<int>(8 * (M + 2) + 128);
+
+	bool ok = false;
+	perr err = perr::none;
+	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	rnode nodes[static_cast<size_t>(node_cap)]{};
+	int node_count = 0;
+	int children[static_cast<size_t>(child_cap)]{};
+	int child_count = 0;
+	int root = -1;
+};
+
+// --- the contextual lexer + Earley pipeline
+//
+// Lexing is interleaved with parsing, like lark's contextual lexers:
+// after an Earley set is closed, only the terminals some item expects
+// (plus the %ignore set) are candidates at the current position. That
+// is what lets keyword-vs-identifier and XML-style tag-vs-text
+// languages tokenize: "true" lexes as an unquoted key where a key is
+// expected and as the keyword where a value is.
+
+struct lex_token {
+	int sym;
+	int off;
+	int len;
+};
+
+// the number of dotted positions, an upper bound on distinct
+// (prod, dot) pairs per set
+template <typename GT> constexpr int dotted_positions(const GT & g) noexcept {
+	int d = 0;
+	for (int p = 0; p < g.prod_count; ++p) { d += g.prods[p].rhs_len + 1; }
+	return d;
+}
+
+template <typename GT, int ItemCap, int SetCap> struct chart {
+	eitem items[static_cast<size_t>(ItemCap)]{};
+	int item_count = 0;
+	int set_off[static_cast<size_t>(SetCap)]{};
+	int set_count = 0;
+	bool overflow = false;
+
+	constexpr bool contains(int from, int prod, int dot, int origin) const noexcept {
+		for (int i = from; i < item_count; ++i) {
+			if (items[i].prod == prod && items[i].dot == dot && items[i].origin == origin) { return true; }
+		}
+		return false;
+	}
+	constexpr void push(int set_start, int prod, int dot, int origin) noexcept {
+		if (contains(set_start, prod, dot, origin)) { return; }
+		if (item_count >= ItemCap) {
+			overflow = true;
+			return;
+		}
+		items[item_count++] = eitem{prod, dot, origin};
+	}
+};
+
+template <typename GT, size_t M> struct pipeline_result {
+	lex_token toks[M + 1]{};
+	int count = 0;
+	bool ok = false;
+	perr err = perr::none;
+	int err_pos = 0;
+	int expected[static_cast<size_t>(expected_cap)]{};
+	int expected_count = 0;
+	int expected_total = 0;
+
+	// keep the terminals some Earley item expected at the failure point
+	constexpr void record_expected(const bool * exp, int sym_count) noexcept {
+		for (int t = 0; t < sym_count; ++t) {
+			if (!exp[t]) { continue; }
+			if (expected_count < expected_cap) { expected[expected_count++] = t; }
+			++expected_total;
+		}
+	}
+};
+
+// close set i: run predictions and completions to a fixpoint
+template <typename GT, int ItemCap, int SetCap>
+constexpr void close_set(const GT & g, chart<GT, ItemCap, SetCap> & ch, int i) noexcept {
+	const int set_start = ch.set_off[i];
+	for (int ix = set_start; ix < ch.item_count && !ch.overflow; ++ix) {
+		const eitem it = ch.items[ix];
+		const cprod & pr = g.prods[it.prod];
+		if (it.dot < pr.rhs_len) {
+			const int nxt_sym = g.rhs_pool[pr.rhs_off + it.dot];
+			if (!g.syms[nxt_sym].terminal) {
+				// predict
+				for (int p = 0; p < g.prod_count; ++p) {
+					if (g.prods[p].lhs == nxt_sym) { ch.push(set_start, p, 0, i); }
+				}
+				// Aycock-Horspool: nullable nonterminals also advance
+				if (g.nullable[nxt_sym]) { ch.push(set_start, it.prod, it.dot + 1, it.origin); }
+			}
+		} else {
+			// complete
+			const int lhs = pr.lhs;
+			const int parent_end = it.origin == i ? ch.item_count : ch.set_off[it.origin + 1];
+			for (int j = ch.set_off[it.origin]; j < parent_end; ++j) {
+				const eitem parent = ch.items[j];
+				const cprod & ppr = g.prods[parent.prod];
+				if (parent.dot < ppr.rhs_len && g.rhs_pool[ppr.rhs_off + parent.dot] == lhs) {
+					ch.push(set_start, parent.prod, parent.dot + 1, parent.origin);
+				}
+			}
+		}
+	}
+}
+
+// is the start rule completed over the whole token span?
+template <typename GT, int ItemCap, int SetCap>
+constexpr bool accepted(const GT & g, int start_sym, const chart<GT, ItemCap, SetCap> & ch, int i) noexcept {
+	for (int ix = ch.set_off[i]; ix < ch.item_count; ++ix) {
+		const eitem it = ch.items[ix];
+		if (g.prods[it.prod].lhs == start_sym && it.origin == 0 && it.dot == g.prods[it.prod].rhs_len) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// a tracer that traces nothing: every trace call is guarded by
+// `if constexpr (Tracer::enabled)`, so the disabled form costs zero
+// constexpr steps (debug.hpp provides the recording trace_log)
+struct null_tracer {
+	static constexpr bool enabled = false;
+};
+
+// the interleaved pipeline: close a set, lex among expected terminals,
+// scan, repeat
+template <typename GT, size_t M, int ItemCap, int SetCap, typename Tracer = null_tracer>
+constexpr pipeline_result<GT, M> run_pipeline(const GT & g, int start_sym, std::string_view in,
+                                              chart<GT, ItemCap, SetCap> & ch, Tracer * tr = nullptr) noexcept {
+	pipeline_result<GT, M> r{};
+	bool expected[static_cast<size_t>(GT::lim::syms)]{};
+	bool cur[static_cast<size_t>(GT::lim::states)]{};
+	bool nxt[static_cast<size_t>(GT::lim::states)]{};
+	int accept_len[static_cast<size_t>(GT::lim::syms)]{};
+
+	ch.set_off[0] = 0;
+	for (int p = 0; p < g.prod_count; ++p) {
+		if (g.prods[p].lhs == start_sym) { ch.push(0, p, 0, 0); }
+	}
+
+	size_t pos = 0;
+	int i = 0;
+	while (true) {
+		close_set(g, ch, i);
+		ch.set_off[i + 1] = ch.item_count;
+		ch.set_count = i + 2;
+		if constexpr (Tracer::enabled) {
+			tr->event("earley: set closed (set, items)", {}, i, ch.set_off[i + 1] - ch.set_off[i]);
+		}
+		if (ch.overflow) {
+			if constexpr (Tracer::enabled) { tr->event("earley: chart overflow", {}, i); }
+			r.err = perr::overflow;
+			return r;
+		}
+
+		// which terminals does some item expect here?
+		for (int t = 0; t < g.sym_count; ++t) { expected[t] = false; }
+		for (int ix = ch.set_off[i]; ix < ch.set_off[i + 1]; ++ix) {
+			const eitem it = ch.items[ix];
+			const cprod & pr = g.prods[it.prod];
+			if (it.dot < pr.rhs_len) {
+				const int nxt_sym = g.rhs_pool[pr.rhs_off + it.dot];
+				if (g.syms[nxt_sym].terminal) { expected[nxt_sym] = true; }
+			}
+		}
+
+		// lex: expected terminals plus the ignored ones; skips loop here
+		int winner = -1;
+		while (pos < in.size()) {
+			for (int s = 0; s < g.state_count; ++s) { cur[s] = false; }
+			for (int t = 0; t < g.sym_count; ++t) {
+				accept_len[t] = -1;
+				if (g.syms[t].terminal && g.syms[t].nfa_start >= 0 && (expected[t] || g.syms[t].ignored)) {
+					cur[g.syms[t].nfa_start] = true;
+				}
+			}
+			int len = 0;
+			bool alive = true;
+			while (alive) {
+				bool grew = true;
+				while (grew) {
+					grew = false;
+					for (int s = 0; s < g.state_count; ++s) {
+						if (!cur[s]) { continue; }
+						for (int e = g.state_first_edge[s]; e >= 0; e = g.edges[e].next) {
+							if (g.edges[e].eps && !cur[g.edges[e].to]) {
+								cur[g.edges[e].to] = true;
+								grew = true;
+							}
+						}
+					}
+				}
+				if (len > 0) {
+					for (int t = 0; t < g.sym_count; ++t) {
+						if (g.syms[t].terminal && g.syms[t].nfa_accept >= 0 && (expected[t] || g.syms[t].ignored)
+						    && cur[g.syms[t].nfa_accept]) {
+							accept_len[t] = len;
+						}
+					}
+				}
+				if (pos + static_cast<size_t>(len) >= in.size()) { break; }
+				const int c = static_cast<unsigned char>(in[pos + static_cast<size_t>(len)]);
+				bool any = false;
+				for (int s = 0; s < g.state_count; ++s) { nxt[s] = false; }
+				for (int s = 0; s < g.state_count; ++s) {
+					if (!cur[s]) { continue; }
+					for (int e = g.state_first_edge[s]; e >= 0; e = g.edges[e].next) {
+						if (!g.edges[e].eps && g.edges[e].mask.get(c)) {
+							nxt[g.edges[e].to] = true;
+							any = true;
+						}
+					}
+				}
+				if (!any) {
+					alive = false;
+				} else {
+					for (int s = 0; s < g.state_count; ++s) { cur[s] = nxt[s]; }
+					++len;
+				}
+			}
+			// longest, then priority, then literal over pattern, then
+			// definition order; expected beats ignored-only on a tie
+			int best = -1;
+			for (int t = 0; t < g.sym_count; ++t) {
+				if (accept_len[t] <= 0) { continue; }
+				if (best < 0) {
+					best = t;
+					continue;
+				}
+				if (accept_len[t] != accept_len[best]) {
+					if (accept_len[t] > accept_len[best]) { best = t; }
+					continue;
+				}
+				if (expected[t] != expected[best]) {
+					if (expected[t]) { best = t; }
+					continue;
+				}
+				if (g.syms[t].prio != g.syms[best].prio) {
+					if (g.syms[t].prio > g.syms[best].prio) { best = t; }
+					continue;
+				}
+				const bool t_lit = g.syms[t].keyword;
+				const bool b_lit = g.syms[best].keyword;
+				if (t_lit != b_lit) {
+					if (t_lit) { best = t; }
+					continue;
+				}
+			}
+			if (best < 0) {
+				if constexpr (Tracer::enabled) { tr->event("lex: no terminal matches (offset)", {}, static_cast<long>(pos)); }
+				r.err = perr::lex;
+				r.err_pos = static_cast<int>(pos);
+				r.record_expected(expected, g.sym_count);
+				return r;
+			}
+			if (expected[best]) {
+				winner = best;
+				break;
+			}
+			// ignored: skip and lex again in the same set
+			if constexpr (Tracer::enabled) {
+				tr->event("lex: skip ignored (offset, length)", g.name_of(best), static_cast<long>(pos), accept_len[best]);
+			}
+			pos += static_cast<size_t>(accept_len[best]);
+		}
+
+		if (winner < 0) {
+			// input exhausted (possibly after trailing ignored tokens)
+			if (pos >= in.size() && accepted(g, start_sym, ch, i)) {
+				if constexpr (Tracer::enabled) { tr->event("earley: accepted (tokens)", {}, i); }
+				r.ok = true;
+				r.count = i;
+				return r;
+			}
+			if constexpr (Tracer::enabled) { tr->event("earley: rejected at end of tokens (offset)", {}, static_cast<long>(pos)); }
+			r.err = perr::parse;
+			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
+			return r;
+		}
+
+		// scan: advance every item expecting the winner into set i+1
+		if (r.count > static_cast<int>(M)) {
+			r.err = perr::overflow;
+			r.err_pos = static_cast<int>(pos);
+			return r;
+		}
+		if constexpr (Tracer::enabled) {
+			tr->event("lex: token (offset, length)", g.name_of(winner), static_cast<long>(pos), accept_len[winner]);
+		}
+		r.toks[r.count++] = lex_token{winner, static_cast<int>(pos), accept_len[winner]};
+		const int set_start = ch.set_off[i];
+		const int set_end = ch.set_off[i + 1];
+		for (int ix = set_start; ix < set_end; ++ix) {
+			const eitem it = ch.items[ix];
+			const cprod & pr = g.prods[it.prod];
+			if (it.dot < pr.rhs_len && g.rhs_pool[pr.rhs_off + it.dot] == winner) {
+				ch.push(set_end, it.prod, it.dot + 1, it.origin);
+			}
+		}
+		if (ch.item_count == set_end) {
+			// nothing advanced: cannot happen (the winner was expected)
+			r.err = perr::parse;
+			r.err_pos = static_cast<int>(pos);
+			r.record_expected(expected, g.sym_count);
+			return r;
+		}
+		pos += static_cast<size_t>(accept_len[winner]);
+		++i;
+		if (i + 2 >= SetCap) {
+			r.err = perr::overflow;
+			return r;
+		}
+	}
+}
+
+// --- derivation extraction
+
+template <typename GT, typename RT, int ItemCap, int SetCap, typename Tracer = null_tracer> struct tree_builder {
+	const GT & g;
+	const chart<GT, ItemCap, SetCap> & ch;
+	const lex_token * toks;
+	int ntoks;
+	std::string_view input;
+	RT & out;
+	Tracer * tr = nullptr;
+	bool failed = false;
+	perr fail_kind = perr::none;
+	int fail_pos = -1; // byte offset of the failure, -1 when unknown
+
+	static constexpr int max_kids = 256;
+	static constexpr int max_depth = 256;
+
+	// the input offset where token index idx starts (input end past it)
+	constexpr int tok_off(int idx) const noexcept {
+		return idx < ntoks ? toks[idx].off : static_cast<int>(input.size());
+	}
+
+	constexpr void fail(perr k) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+		}
+	}
+	constexpr void fail(perr k, int pos) noexcept {
+		if (!failed) {
+			failed = true;
+			fail_kind = k;
+			fail_pos = pos;
+		}
+	}
+
+	constexpr bool completed(int prod, int origin, int end) const noexcept {
+		for (int i = ch.set_off[end]; i < ch.set_off[end + 1]; ++i) {
+			if (ch.items[i].prod == prod && ch.items[i].origin == origin
+			    && ch.items[i].dot == g.prods[prod].rhs_len) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	constexpr bool derivable(int sym, int s, int e) const noexcept {
+		for (int p = 0; p < g.prod_count; ++p) {
+			if (g.prods[p].lhs == sym && completed(p, s, e)) { return true; }
+		}
+		return false;
+	}
+
+	// find split points for prod p over token span [s, e): splits[i] is
+	// where rhs symbol i starts; splits[rhs_len] == e
+	constexpr bool find_splits(int p, int s, int e, int * splits, int i, int pos, int depth) noexcept {
+		if (depth > max_depth) {
+			fail(perr::depth, tok_off(pos));
+			return false;
+		}
+		const cprod & pr = g.prods[p];
+		splits[i] = pos;
+		if (i == pr.rhs_len) { return pos == e; }
+		const int sym = g.rhs_pool[pr.rhs_off + i];
+		if (g.syms[sym].terminal) {
+			if (pos < e && toks[pos].sym == sym) {
+				return find_splits(p, s, e, splits, i + 1, pos + 1, depth + 1);
+			}
+			return false;
+		}
+		// nonterminal: try candidate ends, longest first
+		for (int q = e; q >= pos; --q) {
+			if (!derivable(sym, pos, q)) { continue; }
+			if (find_splits(p, s, e, splits, i + 1, q, depth + 1)) { return true; }
+		}
+		return false;
+	}
+
+	constexpr int add_node(rnode n) noexcept {
+		if (out.node_count >= RT::node_cap) {
+			fail(perr::overflow);
+			return -1;
+		}
+		out.nodes[out.node_count] = n;
+		return out.node_count++;
+	}
+
+	constexpr int commit_children(const int * kids, int count) noexcept {
+		if (out.child_count + count > RT::child_cap) {
+			fail(perr::overflow);
+			return -1;
+		}
+		const int off = out.child_count;
+		for (int i = 0; i < count; ++i) { out.children[out.child_count++] = kids[i]; }
+		return off;
+	}
+
+	// derive nonterminal sym over [s, e), appending 0..n node ids into
+	// kids (splicing flattens here); keep_all propagates ! through
+	// helpers
+	constexpr void derive(int sym, int s, int e, bool keep_all, int * kids, int & nkids, int depth) noexcept {
+		if (failed) { return; }
+		if (depth > max_depth) {
+			fail(perr::depth, tok_off(s));
+			return;
+		}
+		// first completed production, in definition order
+		int splits[static_cast<size_t>(GT::lim::max_rhs_len) + 1]{};
+		int chosen = -1;
+		for (int p = 0; p < g.prod_count && chosen < 0; ++p) {
+			if (g.prods[p].lhs != sym) { continue; }
+			if (!completed(p, s, e)) { continue; }
+			if (find_splits(p, s, e, splits, 0, s, depth)) { chosen = p; }
+			if (failed) { return; }
+		}
+		if (chosen < 0) {
+			if constexpr (Tracer::enabled) { tr->event("derive: no completed production (tokens)", g.name_of(sym), s, e); }
+			fail(perr::parse, tok_off(s));
+			return;
+		}
+		if constexpr (Tracer::enabled) { tr->event("derive: production chosen (rule, tokens)", g.name_of(sym), chosen, e - s); }
+		CTLARK_CONSTEXPR_ASSERT(splits[g.prods[chosen].rhs_len] == e, "ctlark internal: derivation splits do not cover the span");
+		const cprod & pr = g.prods[chosen];
+		const csym & sm = g.syms[sym];
+		const bool splice = sm.splice || sm.inlined;
+		const bool own_keep = sm.splice ? keep_all : sm.bang;
+
+		int local[max_kids]{};
+		int nlocal = 0;
+		int * dst = splice ? kids : local;
+		int & ndst = splice ? nkids : nlocal;
+
+		for (int i = 0; i < pr.rhs_len && !failed; ++i) {
+			const int child_sym = g.rhs_pool[pr.rhs_off + i];
+			if (g.syms[child_sym].terminal) {
+				const lex_token & tk = toks[splits[i]];
+				if (!g.filtered(child_sym) || own_keep) {
+					if (ndst >= max_kids) {
+						fail(perr::overflow);
+						return;
+					}
+					const int id = add_node(rnode{true, g.syms[child_sym].name_off, g.syms[child_sym].name_len,
+					                              tk.off, tk.len, 0, 0});
+					if (id < 0) { return; }
+					dst[ndst++] = id;
+				}
+			} else {
+				derive(child_sym, splits[i], splits[i + 1], own_keep, dst, ndst, depth + 1);
+			}
+		}
+		if (failed || splice) { return; }
+
+		// ?rule with a single child collapses to that child, unless the
+		// chosen alternative is aliased (the alias forces a node)
+		if (sm.cond && nlocal == 1 && pr.alias_off < 0) {
+			if (nkids >= max_kids) {
+				fail(perr::overflow);
+				return;
+			}
+			kids[nkids++] = local[0];
+			return;
+		}
+		// tree node: aliased name if the production has one
+		int name_off = sm.name_off;
+		int name_len = sm.name_len;
+		if (pr.alias_off >= 0) {
+			name_off = pr.alias_off;
+			name_len = pr.alias_len;
+		}
+		const int coff = commit_children(local, nlocal);
+		if (coff < 0) { return; }
+		const int id = add_node(rnode{false, name_off, name_len, 0, 0, coff, nlocal});
+		if (id < 0) { return; }
+		if (nkids >= max_kids) {
+			fail(perr::overflow);
+			return;
+		}
+		kids[nkids++] = id;
+	}
+};
+
+// --- the whole pipeline
+
+template <const auto & G, const auto & In, int StartSym, typename Tracer = null_tracer>
+constexpr auto run_parse_traced(Tracer * tr = nullptr) noexcept {
+	constexpr size_t M = In.size();
+	using GT = std::remove_cv_t<std::remove_reference_t<decltype(G)>>;
+	parse_result<M> r{};
+
+	// the input is a ctll::fixed_string (char32_t units holding bytes)
+	char buf[M + 1]{};
+	for (size_t i = 0; i < M; ++i) { buf[i] = static_cast<char>(In[i]); }
+	const std::string_view in{buf, M};
+
+	if (!G.ok) {
+		r.err = perr::parse;
+		return r;
+	}
+
+	constexpr int item_cap = (dotted_positions(G) + 16) * (static_cast<int>(M) + 2) * 2;
+	constexpr int set_cap = static_cast<int>(M) + 3;
+	chart<GT, item_cap, set_cap> ch{};
+	const auto pipe = run_pipeline<GT, M>(G, StartSym, in, ch, tr);
+	if (!pipe.ok) {
+		r.err = pipe.err;
+		r.err_pos = pipe.err_pos;
+		r.expected_count = pipe.expected_count;
+		r.expected_total = pipe.expected_total;
+		for (int k = 0; k < pipe.expected_count; ++k) { r.expected[k] = pipe.expected[k]; }
+		return r;
+	}
+
+	using TB = tree_builder<GT, parse_result<M>, item_cap, set_cap, Tracer>;
+	TB tb{G, ch, pipe.toks, pipe.count, in, r, tr};
+	int kids[TB::max_kids]{};
+	int nkids = 0;
+	tb.derive(StartSym, 0, pipe.count, false, kids, nkids, 0);
+	if (tb.failed) {
+		r.err = tb.fail_kind;
+		if (tb.fail_pos >= 0) { r.err_pos = tb.fail_pos; }
+		return r;
+	}
+	if (nkids == 1) {
+		r.root = kids[0];
+	} else {
+		// a spliced or empty start: wrap what remains under the start name
+		const int coff = tb.commit_children(kids, nkids);
+		if (tb.failed) {
+			r.err = tb.fail_kind;
+			return r;
+		}
+		r.root = tb.add_node(rnode{false, G.syms[StartSym].name_off, G.syms[StartSym].name_len, 0, 0, coff, nkids});
+		if (tb.failed) {
+			r.err = tb.fail_kind;
+			return r;
+		}
+	}
+	r.ok = true;
+	return r;
+}
+
+template <const auto & G, const auto & In, int StartSym>
+constexpr auto run_parse() noexcept {
+	return run_parse_traced<G, In, StartSym>();
 }
 
 } // namespace ctlark::detail
@@ -36359,6 +48213,9 @@ template <CTLARK_STRING_INPUT grammar_text> struct grammar_def {
 #endif
 	using parser_type = ctll::parser<lark_grammar, text, lark_actions>;
 	static constexpr bool text_ok = parser_type::template correct_with<context<>>;
+	// where the LL(1) grammar-text parse stopped (0 when it succeeded)
+	static constexpr size_t text_error_pos =
+		text_ok ? 0 : parser_type::template output<context<>>::position;
 
 	static constexpr auto make() noexcept {
 		if constexpr (text_ok) {
@@ -36423,20 +48280,142 @@ CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
                       CTLARK_STRING_INPUT start = default_start_rule>
 constexpr bool is_valid = detail::parse_def<grammar, input, start>::result.ok;
 
+// what went wrong, as a value: the error kind, byte offset, line,
+// column and the expected terminals (kind == error_kind::none when the
+// parse succeeded)
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr error_info_t error_info() noexcept {
+	return detail::error_info_of<detail::parse_def<grammar, input, start>>();
+}
+
+// the rendered diagnostic - location, source snippet with a caret, and
+// the expected terminals - as a static string ("" when the parse
+// succeeded):
+//
+//   ctlark: lexical error at line 1, column 7: no expected terminal matches
+//     [1, 2,]
+//           ^
+//   expected: SIGNED_NUMBER, ']', ESCAPED_STRING
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr std::string_view error_message() noexcept {
+	using pd = detail::parse_def<grammar, input, start>;
+	if constexpr (detail::classify<pd>() == error_kind::none) {
+		return std::string_view{};
+	} else {
+		return detail::message_storage<pd>::view;
+	}
+}
+
+// like error_info, for the grammar alone: bad_grammar_text failures
+// carry the line and column IN THE GRAMMAR TEXT where its parse stopped
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar> constexpr error_info_t grammar_error_info() noexcept {
+	using gd = detail::grammar_def<grammar>;
+	error_info_t e{};
+	if constexpr (!gd::text_ok) {
+		e.kind = error_kind::bad_grammar_text;
+		e.position = gd::text_error_pos;
+		const source_position at = locate(detail::grammar_text<gd>::view, e.position);
+		e.line = at.line;
+		e.column = at.column;
+	} else if constexpr (!gd::tables.ok) {
+		e.kind = error_kind::bad_grammar;
+	}
+	return e;
+}
+
+#ifdef CTLARK_VERBOSE_ERRORS
+namespace detail {
+
+// instantiated on a failed parse<>() so the compiler's backtrace shows
+// the error kind, line and column as template arguments
+template <error_kind Kind, size_t Line, size_t Column> struct parse_failed_at {
+	static_assert(Kind == error_kind::none,
+	              "ctlark: the parse failed - the error kind, line and column are the "
+	              "template arguments of parse_failed_at<...> in this diagnostic");
+	static constexpr bool instantiated = true;
+};
+
+#if CTLL_CNTTP_COMPILER_CHECK
+inline constexpr size_t verbose_headline_len = 72;
+
+// a char-array NTTP prints as a readable string literal in compiler
+// backtraces (a fixed_string would print as char32_t code points)
+struct diag_text {
+	char data[verbose_headline_len + 1]{};
+};
+
+// the first line of the rendered error
+template <typename PD> constexpr diag_text verbose_headline() noexcept {
+	diag_text t{};
+	const std::string_view m = message_storage<PD>::view;
+	for (size_t i = 0; i < m.size() && i < verbose_headline_len && m[i] != '\n'; ++i) { t.data[i] = m[i]; }
+	return t;
+}
+
+// the C++20 spelling also carries the headline text itself
+template <diag_text Msg, error_kind Kind, size_t Line, size_t Column> struct parse_failed {
+	static_assert(Kind == error_kind::none,
+	              "ctlark: the parse failed - the message, error kind, line and column are "
+	              "the template arguments of parse_failed<...> in this diagnostic");
+	static constexpr bool instantiated = true;
+};
+#endif
+
+} // namespace detail
+
+// instantiate the failure marker for a (grammar, input, start) so the
+// kind, line, column (and in C++20 the headline) appear in the
+// compiler's backtrace; a no-op when the parse succeeded. Format
+// layers built on ctlark call this from their own parse() gates.
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr bool verbose_report() noexcept {
+	using pd = detail::parse_def<grammar, input, start>;
+	if constexpr (detail::classify<pd>() != error_kind::none) {
+		constexpr error_info_t vei = error_info<grammar, input, start>();
+#if CTLL_CNTTP_COMPILER_CHECK
+		static_assert(detail::parse_failed<detail::verbose_headline<pd>(), vei.kind, vei.line, vei.column>::instantiated);
+#else
+		static_assert(detail::parse_failed_at<vei.kind, vei.line, vei.column>::instantiated);
+#endif
+	}
+	return true;
+}
+#endif
+
 // parse the input into a Tree/Token type; any failure is a compile
-// error with a static_assert naming the stage that failed
+// error with a static_assert naming the stage that failed and the
+// query to run for the details (define CTLARK_VERBOSE_ERRORS to also
+// get the kind, line and column embedded in the compiler's backtrace)
 CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
                       CTLARK_STRING_INPUT start = default_start_rule>
 constexpr auto parse() noexcept {
 	using pd = detail::parse_def<grammar, input, start>;
 	static_assert(pd::def::text_ok,
-	              "ctlark: the grammar text is not valid Lark (see the README for the supported subset)");
+	              "ctlark: the grammar text is not valid Lark - print "
+	              "ctlark::grammar_error_info<grammar>() for the line and column "
+	              "(see the README for the supported subset)");
 	static_assert(!pd::def::text_ok || pd::def::tables.ok,
-	              "ctlark: the grammar is not usable - print ctlark::grammar_error<...>() for the reason");
+	              "ctlark: the grammar is not usable - print ctlark::grammar_error<grammar>() for the reason");
 	static_assert(!pd::def::tables.ok || pd::start_sym >= 0,
 	              "ctlark: the start rule is not defined in the grammar");
-	static_assert(pd::start_sym < 0 || pd::result.ok,
-	              "ctlark: the input does not match the grammar");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::lex,
+	              "ctlark: lexical error - no expected terminal matches the input; print "
+	              "ctlark::error_message<grammar, input>() for the location and the expected terminals");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::parse,
+	              "ctlark: syntax error - the input does not match the grammar; print "
+	              "ctlark::error_message<grammar, input>() for the location and the expected terminals");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::overflow,
+	              "ctlark: an internal pool overflowed - the input is too large for the compiled "
+	              "limits (see the README section on constexpr budgets)");
+	static_assert(pd::start_sym < 0 || pd::result.ok || pd::result.err != detail::perr::depth,
+	              "ctlark: the derivation recursion limit was hit (deeply nested input or "
+	              "cyclic nullable rules)");
+#ifdef CTLARK_VERBOSE_ERRORS
+	(void)verbose_report<grammar, input, start>();
+#endif
 	if constexpr (pd::result.ok) {
 		return typename detail::lift_node<pd::def::tables, pd::in, pd::result, pd::result.root>::type{};
 	} else {
@@ -36462,6 +48441,414 @@ CTLL_EXPORT template <CTLARK_STRING_INPUT grammar_text> struct lark {
 };
 
 } // namespace ctlark
+
+// the debugging toolbox builds on grammar_def/parse_def above
+#ifndef CTLARK__DEBUG__HPP
+#define CTLARK__DEBUG__HPP
+
+// Tools for debugging constexpr parses. Include order matters: this
+// header is included at the END of ctlark.hpp because it builds on the
+// grammar_def/parse_def machinery defined there.
+//
+//   debug::traced_parse<grammar, input>()  - rerun the parse with a
+//       recording trace log. It is a plain constexpr function, so the
+//       SAME call also runs at runtime: call it from main() to step
+//       through the parser under a debugger (or stream the trace live
+//       with CTLARK_DEBUG_STDERR) on exactly the input that fails at
+//       compile time.
+//   debug::parse_runtime<grammar>(text)    - parse a RUNTIME string
+//       against the compile-time tables; iterate on inputs without
+//       recompiling.
+//   debug::dump_tokens<grammar, input>()   - the lexed token stream as
+//       a static string (up to the first error, if any).
+//   debug::dump_grammar<grammar>()         - the lowered terminals and
+//       productions, i.e. what the Earley parser actually runs.
+//   CTLARK_CONSTEXPR_ASSERT (assert.hpp)   - internal invariants that
+//       stop constant evaluation with a readable message; enabled by
+//       defining CTLARK_DEBUG.
+
+#ifndef CTLARK_IN_A_MODULE
+#include <cstddef>
+#include <memory>
+#include <string_view>
+#include <vector>
+#ifdef CTLARK_DEBUG_STDERR
+#include <cstdio>
+#endif
+#endif
+
+namespace ctlark::debug {
+
+namespace detail {
+
+using namespace ctlark::detail;
+
+// runtime-vs-constexpr detection, usable from C++17
+constexpr bool constant_evaluated() noexcept {
+#if defined(__cpp_lib_is_constant_evaluated)
+	return std::is_constant_evaluated();
+#elif defined(__GNUC__) || defined(__clang__)
+	return __builtin_is_constant_evaluated();
+#elif defined(_MSC_VER) && _MSC_VER >= 1925
+	return __builtin_is_constant_evaluated();
+#else
+	return true; // unknown: assume constexpr, never attempt runtime I/O
+#endif
+}
+
+constexpr error_kind kind_from_perr(perr e) noexcept {
+	switch (e) {
+		case perr::lex: return error_kind::lex;
+		case perr::overflow: return error_kind::overflow;
+		case perr::depth: return error_kind::depth;
+		case perr::parse: return error_kind::parse;
+		case perr::none: return error_kind::none;
+	}
+	return error_kind::parse;
+}
+
+// error_info_t built from a finished parse_result (shared by the
+// traced and runtime paths; unlike error_info<>() this also works on
+// results computed at runtime)
+template <typename GT, typename PR>
+constexpr error_info_t info_from_result(const GT & g, const PR & pr, std::string_view in) noexcept {
+	error_info_t e{};
+	if (pr.ok) { return e; }
+	e.kind = kind_from_perr(pr.err);
+	e.position = static_cast<size_t>(pr.err_pos);
+	const source_position at = locate(in, e.position);
+	e.line = at.line;
+	e.column = at.column;
+	e.expected_count = pr.expected_count;
+	e.expected_total = pr.expected_total;
+	for (int i = 0; i < pr.expected_count; ++i) { e.expected[i] = term_display(g, pr.expected[i]); }
+	return e;
+}
+
+} // namespace detail
+
+// --- the trace log: a flat text of one line per parser event
+
+CTLL_EXPORT template <size_t Cap = 4096> struct trace_log {
+	static constexpr bool enabled = true;
+	static constexpr long no_value = -1;
+
+	char buf[Cap]{};
+	size_t len = 0;
+	int events = 0;
+	bool truncated = false;
+
+	constexpr void put(std::string_view s) noexcept {
+		for (const char c : s) {
+			if (len + 1 < Cap) {
+				buf[len++] = c;
+			} else {
+				truncated = true;
+			}
+		}
+	}
+	constexpr void put_num(long v) noexcept {
+		if (v < 0) {
+			put("-");
+			v = -v;
+		}
+		char d[20]{};
+		size_t n = 0;
+		do {
+			d[n++] = static_cast<char>('0' + v % 10);
+			v /= 10;
+		} while (v > 0);
+		while (n > 0) { put(std::string_view{&d[--n], 1}); }
+	}
+	constexpr void event(std::string_view stage, std::string_view what = {},
+	                     long a = no_value, long b = no_value) noexcept {
+		++events;
+		const size_t start = len;
+		put(stage);
+		if (!what.empty()) {
+			put(" ");
+			put(what);
+		}
+		if (a != no_value) {
+			put(" ");
+			put_num(a);
+		}
+		if (b != no_value) {
+			put(" ");
+			put_num(b);
+		}
+		put("\n");
+#ifdef CTLARK_DEBUG_STDERR
+		if (!detail::constant_evaluated()) { std::fwrite(buf + start, 1, len - start, stderr); }
+#else
+		(void)start;
+#endif
+	}
+	constexpr std::string_view view() const noexcept {
+		return std::string_view{buf, len};
+	}
+};
+
+// --- traced_parse: the parse, narrated
+
+CTLL_EXPORT template <size_t Cap> struct traced_result {
+	bool ok = false;
+	error_info_t error{};
+	trace_log<Cap> log{};
+};
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule, size_t Cap = 4096>
+constexpr traced_result<Cap> traced_parse() noexcept {
+	using pd = ctlark::detail::parse_def<grammar, input, start>;
+	traced_result<Cap> r{};
+	if constexpr (!pd::def::text_ok) {
+		r.error.kind = error_kind::bad_grammar_text;
+		r.log.event("grammar: the grammar text is not valid Lark");
+	} else if constexpr (!pd::def::tables.ok) {
+		r.error.kind = error_kind::bad_grammar;
+		r.log.event("grammar: not usable:", ctlark::grammar_error<grammar>());
+	} else if constexpr (pd::start_sym < 0) {
+		r.error.kind = error_kind::no_start_rule;
+		r.log.event("grammar: the start rule is not defined");
+	} else {
+		const auto pr = ctlark::detail::run_parse_traced<pd::def::tables, pd::in, pd::start_sym>(&r.log);
+		r.ok = pr.ok;
+		if (!pr.ok) {
+			// rebuild the input characters locally so this path also
+			// works when the whole call runs at runtime
+			char buf[pd::in.size() + 1]{};
+			for (size_t i = 0; i < pd::in.size(); ++i) { buf[i] = static_cast<char>(pd::in[i]); }
+			r.error = detail::info_from_result(pd::def::tables, pr, std::string_view{buf, pd::in.size()});
+			// the string_views in error.expected point into the static
+			// grammar tables, never into buf, so returning them is fine
+		}
+	}
+	return r;
+}
+
+// --- parse_runtime: runtime input, compile-time grammar
+//
+// Recognition only (lexing + Earley); the tree-shaping stage that
+// parse<>() adds cannot fail on a recognized input except by depth.
+// MaxTokens bounds the token stream; inputs longer than that report
+// overflow. The chart lives on the heap - this is not constexpr, on
+// purpose.
+
+CTLL_EXPORT struct runtime_token {
+	std::string_view name;  // terminal name in the grammar tables
+	std::string_view value; // the matched span of the input
+	size_t offset = 0;
+};
+
+CTLL_EXPORT struct runtime_result {
+	bool ok = false;
+	error_info_t error{};
+	std::vector<runtime_token> tokens{};
+};
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, size_t MaxTokens = 1024>
+runtime_result parse_runtime(std::string_view in, std::string_view start_rule = "start") {
+	using gd = ctlark::detail::grammar_def<grammar>;
+	runtime_result r{};
+	if constexpr (!gd::text_ok) {
+		r.error.kind = error_kind::bad_grammar_text;
+		return r;
+	} else if constexpr (!gd::tables.ok) {
+		r.error.kind = error_kind::bad_grammar;
+		return r;
+	} else {
+		static constexpr auto & g = gd::tables;
+		using GT = std::remove_cv_t<std::remove_reference_t<decltype(g)>>;
+		const int start_sym = g.find_rule(start_rule);
+		if (start_sym < 0) {
+			r.error.kind = error_kind::no_start_rule;
+			return r;
+		}
+		if (in.size() > MaxTokens) {
+			r.error.kind = error_kind::overflow;
+			return r;
+		}
+		constexpr int item_cap =
+			(ctlark::detail::dotted_positions(g) + 16) * (static_cast<int>(MaxTokens) + 2) * 2;
+		constexpr int set_cap = static_cast<int>(MaxTokens) + 3;
+		const auto ch = std::make_unique<ctlark::detail::chart<GT, item_cap, set_cap>>();
+		const auto pipe = std::make_unique<ctlark::detail::pipeline_result<GT, MaxTokens>>(
+			ctlark::detail::run_pipeline<GT, MaxTokens>(g, start_sym, in, *ch));
+		r.ok = pipe->ok;
+		if (!pipe->ok) { r.error = detail::info_from_result(g, *pipe, in); }
+		const int ntoks = pipe->ok ? pipe->count : 0;
+		r.tokens.reserve(static_cast<size_t>(ntoks));
+		for (int i = 0; i < ntoks; ++i) {
+			const auto & tk = pipe->toks[i];
+			r.tokens.push_back(runtime_token{g.name_of(tk.sym),
+			                                 in.substr(static_cast<size_t>(tk.off), static_cast<size_t>(tk.len)),
+			                                 static_cast<size_t>(tk.off)});
+		}
+		return r;
+	}
+}
+
+// --- dump_tokens: the lexed token stream as a static string
+
+namespace detail {
+
+// lex the input without extracting a tree (its own instantiation, so
+// asking for a token dump does not disturb the cached parse)
+template <typename PD> struct lex_def {
+	static constexpr auto & g = PD::def::tables;
+	using GT = std::remove_cv_t<std::remove_reference_t<decltype(g)>>;
+	static constexpr size_t M = PD::in.size();
+
+	static constexpr auto make() noexcept {
+		char buf[M + 1]{};
+		for (size_t i = 0; i < M; ++i) { buf[i] = static_cast<char>(PD::in[i]); }
+		constexpr int item_cap = (dotted_positions(g) + 16) * (static_cast<int>(M) + 2) * 2;
+		constexpr int set_cap = static_cast<int>(M) + 3;
+		chart<GT, item_cap, set_cap> ch{};
+		return run_pipeline<GT, M>(g, PD::start_sym, std::string_view{buf, M}, ch);
+	}
+	static constexpr auto pipe = make();
+};
+
+template <typename PD> struct tokens_storage {
+	template <typename Sink> static constexpr void render(Sink & s) noexcept {
+		const auto & pipe = lex_def<PD>::pipe;
+		const std::string_view in = input_text<PD>::view;
+		const int n = pipe.ok ? pipe.count : lexed_count();
+		for (int i = 0; i < n; ++i) {
+			const auto & tk = pipe.toks[i];
+			s.put(lex_def<PD>::g.name_of(tk.sym));
+			s.put(" '");
+			s.put_escaped(in.substr(static_cast<size_t>(tk.off), static_cast<size_t>(tk.len)));
+			s.put("' @");
+			put_uint(s, static_cast<size_t>(tk.off));
+			s.put("..");
+			put_uint(s, static_cast<size_t>(tk.off + tk.len));
+			s.put("\n");
+		}
+		if (!pipe.ok) {
+			s.put("! ");
+			s.put(to_string(kind_from_perr(pipe.err)));
+			s.put(" at offset ");
+			put_uint(s, static_cast<size_t>(pipe.err_pos));
+			s.put("\n");
+		}
+	}
+	// on failure pipe.count was left mid-stream; it is still the number
+	// of tokens lexed so far
+	static constexpr int lexed_count() noexcept {
+		return lex_def<PD>::pipe.count;
+	}
+
+	static constexpr size_t measure() noexcept {
+		count_sink s{};
+		render(s);
+		return s.at;
+	}
+	static constexpr size_t length = measure();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		render(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar, CTLARK_STRING_INPUT input,
+                      CTLARK_STRING_INPUT start = default_start_rule>
+constexpr std::string_view dump_tokens() noexcept {
+	using pd = ctlark::detail::parse_def<grammar, input, start>;
+	if constexpr (!pd::def::text_ok || !pd::def::tables.ok) {
+		return ctlark::grammar_error<grammar>();
+	} else if constexpr (pd::start_sym < 0) {
+		return "ctlark: the start rule is not defined in the grammar";
+	} else {
+		return detail::tokens_storage<pd>::view;
+	}
+}
+
+// --- dump_grammar: the lowered terminals and productions
+
+namespace detail {
+
+template <typename GD> struct grammar_storage {
+	template <typename Sink> static constexpr void render(Sink & s) noexcept {
+		const auto & g = GD::tables;
+		for (int t = 0; t < g.sym_count; ++t) {
+			if (!g.syms[t].terminal) { continue; }
+			s.put("terminal ");
+			s.put(g.name_of(t));
+			if (term_is_literal(g, t)) {
+				s.put(" '");
+				s.put_escaped(g.pool_view(g.syms[t].lit_off, g.syms[t].lit_len));
+				s.put("'");
+			}
+			if (g.syms[t].prio != 0) {
+				s.put(" .");
+				const int prio = g.syms[t].prio;
+				if (prio < 0) { s.put("-"); }
+				put_uint(s, static_cast<size_t>(prio < 0 ? -prio : prio));
+			}
+			if (g.syms[t].ignored) { s.put(" %ignore"); }
+			s.put("\n");
+		}
+		for (int p = 0; p < g.prod_count; ++p) {
+			const auto & pr = g.prods[p];
+			s.put(g.name_of(pr.lhs));
+			s.put(":");
+			for (int i = 0; i < pr.rhs_len; ++i) {
+				s.put(" ");
+				s.put(g.name_of(g.rhs_pool[pr.rhs_off + i]));
+			}
+			if (pr.alias_off >= 0) {
+				s.put(" -> ");
+				s.put(g.pool_view(pr.alias_off, pr.alias_len));
+			}
+			s.put("\n");
+		}
+	}
+
+	static constexpr size_t measure() noexcept {
+		count_sink s{};
+		render(s);
+		return s.at;
+	}
+	static constexpr size_t length = measure();
+	struct out_t {
+		char content[length + 1]{};
+	};
+	static constexpr out_t compute() noexcept {
+		out_t o{};
+		repr_sink s{o.content};
+		render(s);
+		return o;
+	}
+	static constexpr out_t content = compute();
+	static constexpr std::string_view view{content.content, length};
+};
+
+} // namespace detail
+
+CTLL_EXPORT template <CTLARK_STRING_INPUT grammar> constexpr std::string_view dump_grammar() noexcept {
+	using gd = ctlark::detail::grammar_def<grammar>;
+	if constexpr (!gd::text_ok || !gd::tables.ok) {
+		return ctlark::grammar_error<grammar>();
+	} else {
+		return detail::grammar_storage<gd>::view;
+	}
+}
+
+} // namespace ctlark::debug
+
+#endif
 
 #endif
 
@@ -37378,6 +49765,40 @@ constexpr void for_each_attribute(element<Name, ctll::list<Attributes...>, Child
 // one text node - exactly as the old semantic actions accumulated
 // them - and whitespace-only text nodes are dropped.
 
+namespace ctxml {
+
+// why the binder rejected a document that PARSES - the well-formedness
+// rules the grammar itself cannot express
+CTLL_EXPORT enum class bind_reason : unsigned char {
+	none,
+	mismatched_tag,      // a close tag does not match its open tag
+	duplicate_attribute, // the same attribute name twice in one element
+	bad_reference        // a character reference to an invalid code point
+};
+
+CTLL_EXPORT constexpr std::string_view to_string(bind_reason r) noexcept {
+	switch (r) {
+		case bind_reason::none: return "none";
+		case bind_reason::mismatched_tag: return "a close tag does not match its open tag";
+		case bind_reason::duplicate_attribute: return "duplicate attribute name in an element";
+		case bind_reason::bad_reference: return "character reference to an invalid code point";
+	}
+	return "unknown";
+}
+
+// the first binder failure: which rule broke, and the raw offending
+// token as written in the input
+CTLL_EXPORT struct bind_error_t {
+	bind_reason reason = bind_reason::none;
+	std::string_view where{};
+
+	constexpr bool ok() const noexcept {
+		return reason == bind_reason::none;
+	}
+};
+
+} // namespace ctxml
+
 namespace ctxml::detail {
 
 using bt_element = ctlark::text<'e', 'l', 'e', 'm', 'e', 'n', 't'>;
@@ -37516,11 +49937,14 @@ template <typename Value> struct text_piece<ctlark::token<bt_TEXT, Value>> {
 	using decoded = decode_entities<Value, 0, 0>;
 	using type = typename decoded::type;
 	static constexpr bool ok = decoded::ok;
+	static constexpr bind_error_t fail =
+		decoded::ok ? bind_error_t{} : bind_error_t{bind_reason::bad_reference, Value::view()};
 };
 template <typename Value> struct text_piece<ctlark::token<bt_CDATA, Value>> {
 	// <![CDATA[ ... ]]>
 	using type = typename strip_span<Value, 9, 3>::type;
 	static constexpr bool ok = true;
+	static constexpr bind_error_t fail{};
 };
 
 template <typename T> struct is_text_piece : std::false_type { };
@@ -37546,6 +49970,8 @@ template <typename Name, typename Value> struct bind_attr<ctlark::tree<bt_attr, 
 	using decoded = decode_entities<typename Value::value_type, 1, 1>;
 	using type = ctxml::attribute<name_type, typename decoded::type>;
 	static constexpr bool ok = decoded::ok;
+	static constexpr bind_error_t fail =
+		decoded::ok ? bind_error_t{} : bind_error_t{bind_reason::bad_reference, Value::value_type::view()};
 };
 
 template <typename T> struct is_attr_node : std::false_type { };
@@ -37674,12 +50100,79 @@ struct element_from<Open, attr_phase<AttrList, AOk, Rest...>> {
 	static constexpr bool ok = fin::ok;
 };
 
+// --- the diagnostic pass: the same checks as the ok fold, but as a
+// plain value computation that reports the FIRST failure and the raw
+// offending token (kept apart from the type-building fold so the
+// reason costs nothing unless bind_error<>() is asked for)
+
+template <typename T> struct attr_info {
+	static constexpr std::string_view name{};
+};
+template <typename N, typename V> struct attr_info<ctlark::tree<bt_attr, N, V>> {
+	static constexpr std::string_view name = N::value_type::view();
+};
+
+template <typename T> struct close_info {
+	static constexpr std::string_view raw{};
+};
+template <typename V> struct close_info<ctlark::token<bt_CLOSE, V>> {
+	static constexpr std::string_view raw = V::view();
+};
+
+template <typename K> constexpr bind_error_t kid_fail() noexcept {
+	if constexpr (is_attr_node<K>::value) {
+		return bind_attr<K>::fail;
+	} else if constexpr (is_text_piece<K>::value) {
+		return text_piece<K>::fail;
+	} else if constexpr (is_close_token<K>::value) {
+		return bind_error_t{};
+	} else {
+		return bind<K>::fail; // a child element, recursively
+	}
+}
+
+template <typename Open, typename... Kids> constexpr bind_error_t element_fail() noexcept {
+	// entity/reference failures and child elements, in document order
+	const bind_error_t kid_fails[] = {kid_fail<Kids>()..., bind_error_t{}};
+	for (const bind_error_t & f : kid_fails) {
+		if (f.reason != bind_reason::none) { return f; }
+	}
+	// attribute names must be unique within this element
+	constexpr size_t n = sizeof...(Kids);
+	const std::string_view attr_names[] = {attr_info<Kids>::name..., std::string_view{}};
+	for (size_t i = 0; i < n; ++i) {
+		if (attr_names[i].empty()) { continue; }
+		for (size_t j = i + 1; j < n; ++j) {
+			if (attr_names[i] == attr_names[j]) {
+				return bind_error_t{bind_reason::duplicate_attribute, attr_names[j]};
+			}
+		}
+	}
+	// the close tag (last kid, when not self-closing) must match
+	const std::string_view closes[] = {close_info<Kids>::raw..., std::string_view{}};
+	std::string_view close_raw{};
+	for (const std::string_view & c : closes) {
+		if (!c.empty()) { close_raw = c; }
+	}
+	if (!close_raw.empty()) {
+		std::string_view cname = close_raw.substr(2, close_raw.size() - 3); // strip "</" and ">"
+		while (!cname.empty() && is_xml_blank(cname[cname.size() - 1])) {
+			cname = cname.substr(0, cname.size() - 1);
+		}
+		if (cname != Open::value_type::view().substr(1)) { // open is "<name"
+			return bind_error_t{bind_reason::mismatched_tag, close_raw};
+		}
+	}
+	return bind_error_t{};
+}
+
 template <typename Open, typename... Kids>
 struct bind<ctlark::tree<bt_element, Open, Kids...>> {
 	using phase = decltype(take_attrs(ctll::list<>{}, bc<true>{}, Kids{}...));
 	using built = element_from<Open, phase>;
 	using type = typename built::type;
 	static constexpr bool ok = built::ok;
+	static constexpr bind_error_t fail = element_fail<Open, Kids...>();
 };
 
 } // namespace ctxml::detail
@@ -39647,9 +52140,40 @@ template <CTXML_STRING_INPUT input> constexpr bool valid_document() noexcept {
 CTLL_EXPORT template <CTXML_STRING_INPUT input> constexpr bool is_valid =
 	detail::valid_document<input>();
 
+// what failed and where, when it does not: kind, byte offset, line,
+// column and the expected terminals (kind none = the syntax is fine)
+CTLL_EXPORT template <CTXML_STRING_INPUT input> constexpr ctlark::error_info_t error_info() noexcept {
+	return ctlark::error_info<detail::xml_grammar, input, detail::xml_start>();
+}
+
+// the rendered diagnostic - location, snippet with a caret, expected
+// terminals - as a static string ("" when the syntax is fine)
+CTLL_EXPORT template <CTXML_STRING_INPUT input> constexpr std::string_view error_message() noexcept {
+	return ctlark::error_message<detail::xml_grammar, input, detail::xml_start>();
+}
+
+// why the binder rejected a document that PARSES - mismatched close
+// tags, duplicate attributes, invalid character references; reason
+// none when the document is valid or when the syntax already failed
+CTLL_EXPORT template <CTXML_STRING_INPUT input> constexpr bind_error_t bind_error() noexcept {
+	if constexpr (!ctlark::is_valid<detail::xml_grammar, input, detail::xml_start>) {
+		return bind_error_t{};
+	} else {
+		return detail::bind<decltype(ctlark::parse<detail::xml_grammar, input, detail::xml_start>())>::fail;
+	}
+}
+
 // parse the input into its root element; invalid XML fails to compile
 CTLL_EXPORT template <CTXML_STRING_INPUT input> constexpr auto parse() noexcept {
-	static_assert(is_valid<input>, "ctxml: the input is not well-formed XML");
+#ifdef CTLARK_VERBOSE_ERRORS
+	(void)ctlark::verbose_report<detail::xml_grammar, input, detail::xml_start>();
+#endif
+	static_assert(ctlark::is_valid<detail::xml_grammar, input, detail::xml_start>,
+	              "ctxml: the input is not valid XML syntax - print ctxml::error_message<input>() "
+	              "for the location and the expected tokens");
+	static_assert(!ctlark::is_valid<detail::xml_grammar, input, detail::xml_start> || is_valid<input>,
+	              "ctxml: the input parses but is not well-formed (mismatched close tag, duplicate "
+	              "attribute, or bad character reference) - print ctxml::bind_error<input>() for the reason");
 	if constexpr (is_valid<input>) {
 		using bound = detail::bind<decltype(ctlark::parse<detail::xml_grammar, input, detail::xml_start>())>;
 		return typename bound::type{};
@@ -39657,6 +52181,30 @@ CTLL_EXPORT template <CTXML_STRING_INPUT input> constexpr auto parse() noexcept 
 		return element<text<>, ctll::list<>>{};
 	}
 }
+
+// the ctlark debugging toolbox with the XML grammar baked in: traced
+// parses (also runnable at runtime under a debugger), runtime inputs
+// against the compile-time tables, token and grammar dumps
+namespace debug {
+
+CTLL_EXPORT template <CTXML_STRING_INPUT input, size_t Cap = 4096> constexpr auto traced_parse() noexcept {
+	return ctlark::debug::traced_parse<detail::xml_grammar, input, detail::xml_start, Cap>();
+}
+
+CTLL_EXPORT template <CTXML_STRING_INPUT input> constexpr std::string_view dump_tokens() noexcept {
+	return ctlark::debug::dump_tokens<detail::xml_grammar, input, detail::xml_start>();
+}
+
+CTLL_EXPORT constexpr std::string_view dump_grammar() noexcept {
+	return ctlark::debug::dump_grammar<detail::xml_grammar>();
+}
+
+CTLL_EXPORT template <size_t MaxTokens = 1024>
+ctlark::debug::runtime_result parse_runtime(std::string_view in) {
+	return ctlark::debug::parse_runtime<detail::xml_grammar, MaxTokens>(in, "start");
+}
+
+} // namespace debug
 
 } // namespace ctxml
 

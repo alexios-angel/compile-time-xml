@@ -62,9 +62,12 @@ set(CTXML_HEADERS
 	include/ctxml/views.hpp
 	include/ctlark.hpp
 	include/ctlark/actions.hpp
+	include/ctlark/assert.hpp
 	include/ctlark/ast.hpp
 	include/ctlark/common.hpp
 	include/ctlark/compile.hpp
+	include/ctlark/debug.hpp
+	include/ctlark/diag.hpp
 	include/ctlark/earley.hpp
 	include/ctlark/lark.hpp
 	include/ctlark/lift.hpp
