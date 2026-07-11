@@ -125,3 +125,87 @@ static_assert([] {
 void empty_symbol() { }
 
 #endif
+
+// --- operator[] and iterators (see include/ctxml/views.hpp)
+
+#if CTLL_CNTTP_COMPILER_CHECK
+
+namespace bracket_tests {
+
+using namespace ctxml::literals;
+
+constexpr auto cfg = ctxml::parse<
+    R"(<service name="demo"><endpoint host="a" tls="true"/><endpoint host="b"/><motd>hi</motd></service>)">();
+
+// [] is get (first child element with the tag) or child (by position),
+// with the tag or index carried in the argument's type
+static_assert(cfg["endpoint"_k].attribute<"host">() == "a"sv);
+static_assert(cfg["motd"_k].text() == "hi"sv);
+static_assert(cfg[2_i].name() == "motd"sv);
+static_assert(cfg[0_i].has_attribute<"tls">());
+
+// name TYPES work as [] arguments in any standard
+static_assert([] {
+	size_t found = 0;
+	ctxml::for_each_child(cfg, [&](auto child) {
+		if constexpr (decltype(child)::type == ctxml::kind::element) {
+			if (cfg[typename decltype(child)::name_type{}].name() == child.name()) {
+				++found;
+			}
+		}
+	});
+	return found;
+}() == 3);
+
+// begin/end yield uniform views from static storage: range-for works,
+// in constexpr evaluation included
+static_assert([] {
+	size_t elements = 0;
+	size_t texts = 0;
+	for (const auto & n : cfg) {
+		if (n.type == ctxml::kind::element) {
+			++elements;
+		} else {
+			++texts;
+		}
+	}
+	return elements * 10 + texts;
+}() == 30);
+
+static_assert([] {
+	for (const auto & n : cfg) {
+		if (n.name == "motd") {
+			return n.text == "hi"; // elements view their direct text
+		}
+	}
+	return false;
+}());
+
+// mixed content: text children view their content, with no name
+static_assert([] {
+	constexpr auto mixed = ctxml::parse<"<a>x<b/>y</a>">();
+	size_t text_chars = 0;
+	for (const auto & n : mixed) {
+		if (n.type == ctxml::kind::text) {
+			text_chars += n.text.size();
+		}
+	}
+	return text_chars;
+}() == 2);
+
+// attributes as an iterable array of name/value views
+static_assert([] {
+	size_t chars = 0;
+	for (const auto & a : ctxml::attributes(cfg["endpoint"_k])) {
+		chars += a.name.size() + a.value.size();
+	}
+	return chars;
+}() == (4 + 1) + (3 + 4));
+static_assert(ctxml::attributes(cfg).size() == 1);
+
+// childless elements iterate zero times
+static_assert(ctxml::begin(ctxml::parse<"<a/>">()) == ctxml::end(ctxml::parse<"<a/>">()));
+
+} // namespace bracket_tests
+
+#endif

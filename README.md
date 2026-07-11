@@ -92,6 +92,33 @@ static_assert(ctxml::serialize(ctxml::parse<"<a  x = '1' >hi<b/></a>">())
     == R"(<a x="1">hi<b/></a>)");
 ```
 
+Brackets and iteration:
+
+```c++
+using namespace ctxml::literals;
+
+doc["endpoint"_k];             // get<"endpoint">(), spelled with brackets
+doc[2_i];                      // child<2>(): the index rides in the argument's TYPE
+doc["endpoint"_k].attribute<"host">();
+
+// begin/end yield uniform views (kind + name + text) from static storage,
+// so range-for and algorithms work - in constexpr evaluation included:
+for (const auto & n : doc) {
+    n.type;   // ctxml::kind::element or kind::text
+    n.name;   // elements: the tag; text nodes: empty
+    n.text;   // elements: their direct text; text nodes: the content
+}
+for (const auto & a : ctxml::attributes(doc)) {
+    a.name, a.value;   // std::string_views
+}
+```
+
+`operator[]` is `get`/`child` under a different spelling: children have
+distinct types, so the tag or index must be a *type* — `"..."_k` (C++20)
+or any `text` name type, and `N_i` for positions (both work in C++17).
+Iterators hand out *views* for the same reason; when you need the child
+itself, with its own accessors, `for_each_child` is the tool.
+
 `serialize` re-escapes text (`& < >`) and attribute values (`& < "`),
 emits childless elements self-closed, and the result is
 null-terminated.

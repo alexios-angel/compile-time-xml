@@ -59,6 +59,7 @@ set(CTXML_HEADERS
 	include/ctxml/grammar.hpp
 	include/ctxml/serialize.hpp
 	include/ctxml/types.hpp
+	include/ctxml/views.hpp
 	include/ctlark.hpp
 	include/ctlark/actions.hpp
 	include/ctlark/ast.hpp

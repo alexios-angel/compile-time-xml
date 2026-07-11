@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #endif
 
 // The document types a parse produces. The whole document is a TYPE -
@@ -231,6 +232,18 @@ struct element<Name, ctll::list<Attributes...>, Children...> {
 	}
 #endif
 
+	// get and child, spelled with brackets: the tag is a text TYPE, so
+	// this works with the "..."_k literal (C++20) and with any name type
+	// in any standard; an integral constant (1_i) picks a child by position
+	template <auto... Chars> constexpr auto operator[](ctxml::text<Chars...>) const noexcept {
+		static_assert((child_name_matches<ctxml::text<Chars...>, Children>() || ...),
+		              "ctxml: no child element with this tag");
+		return find_child_by_name<ctxml::text<Chars...>, Children...>();
+	}
+	template <size_t Index> constexpr auto operator[](std::integral_constant<size_t, Index>) const noexcept {
+		return child<Index>();
+	}
+
 private:
 #if CTLL_CNTTP_COMPILER_CHECK
 	template <ctll::fixed_string Tag, typename Child> static constexpr bool child_matches() noexcept {
@@ -267,6 +280,22 @@ private:
 			return find_attribute<Key, Tail...>();
 		}
 	}
+
+	template <typename Tag, typename Child> static constexpr bool child_name_matches() noexcept {
+		if constexpr (Child::type == kind::element) {
+			return Tag::view() == Child::name_type::view();
+		} else {
+			return false;
+		}
+	}
+
+	template <typename Tag, typename Head, typename... Tail> static constexpr auto find_child_by_name() noexcept {
+		if constexpr (child_name_matches<Tag, Head>()) {
+			return Head{};
+		} else {
+			return find_child_by_name<Tag, Tail...>();
+		}
+	}
 };
 
 // compile-time iteration over an element's children (each with its own
@@ -280,6 +309,46 @@ CTLL_EXPORT template <typename F, typename Name, typename... Attributes, typenam
 constexpr void for_each_attribute(element<Name, ctll::list<Attributes...>, Children...>, F && f) {
 	(f(typename Attributes::name_type{}, typename Attributes::value_type{}), ...);
 }
+
+// --- literal suffixes: tags and indexes as types, for operator[]
+
+namespace detail {
+
+#if CTLL_CNTTP_COMPILER_CHECK
+template <ctll::fixed_string S, size_t... I> constexpr auto lift_key(std::index_sequence<I...>) noexcept {
+	return text<static_cast<char>(S[I])...>{};
+}
+#endif
+
+template <char... Digits> constexpr size_t parse_index() noexcept {
+	constexpr char digits[]{Digits...};
+	size_t value = 0;
+	for (const char c : digits) {
+		if (c != '\'') { // the digit separator
+			value = value * 10 + static_cast<size_t>(c - '0');
+		}
+	}
+	return value;
+}
+
+} // namespace detail
+
+// opt in with `using namespace ctxml::literals`
+namespace literals {
+
+#if CTLL_CNTTP_COMPILER_CHECK
+// "name"_k: a tag as a text type - doc["endpoint"_k]
+CTLL_EXPORT template <ctll::fixed_string S> constexpr auto operator""_k() noexcept {
+	return detail::lift_key<S>(std::make_index_sequence<S.size()>{});
+}
+#endif
+
+// 1_i: an index as an integral constant - doc[1_i]
+CTLL_EXPORT template <char... Digits> constexpr auto operator""_i() noexcept {
+	return std::integral_constant<size_t, detail::parse_index<Digits...>()>{};
+}
+
+} // namespace literals
 
 } // namespace ctxml
 

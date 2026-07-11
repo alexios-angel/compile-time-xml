@@ -6,6 +6,7 @@
 #include "ctxml/types.hpp"
 #include "ctxml/bind.hpp"
 #include "ctxml/serialize.hpp"
+#include "ctxml/views.hpp"
 
 // ctxml: compile-time XML.
 //
