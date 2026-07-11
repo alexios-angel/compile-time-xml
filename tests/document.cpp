@@ -142,6 +142,8 @@ static_assert(cfg["endpoint"].attribute("host") == "a"sv);
 static_assert(cfg["motd"].text() == "hi"sv);
 static_assert(cfg[2].name() == "motd"sv);
 static_assert(cfg[0].has_attribute("tls"));
+static_assert(cfg.attribute("name") == "demo"sv);
+static_assert(cfg.has_attribute("name") && !cfg.has_attribute("motd"));
 static_assert(cfg.contains("endpoint"));
 static_assert(!cfg.contains("missing"));
 static_assert(cfg["missing"][0]["still-missing"].name().empty());
@@ -184,8 +186,9 @@ static_assert([] {
 }());
 
 // mixed content: text children view their content, with no name
-static_assert([] {
-	constexpr auto mixed = ctxml::parse<"<a>x<b/>y</a>">();
+// (gcc 10 wants this loop in a named function rather than a constexpr lambda)
+constexpr auto mixed = ctxml::parse<"<a>x<b/>y</a>">();
+constexpr size_t mixed_text_chars() {
 	size_t text_chars = 0;
 	for (const auto & n : mixed) {
 		if (n.type == ctxml::kind::text) {
@@ -193,16 +196,19 @@ static_assert([] {
 		}
 	}
 	return text_chars;
-}() == 2);
+}
+static_assert(mixed_text_chars() == 2);
 
 // attributes as an iterable array of name/value views
-static_assert([] {
+// (gcc 10 wants this loop in a named function rather than a constexpr lambda)
+constexpr size_t endpoint_attribute_chars() {
 	size_t chars = 0;
 	for (const auto & a : ctxml::attributes(cfg["endpoint"])) {
 		chars += a.name.size() + a.value.size();
 	}
 	return chars;
-}() == (4 + 1) + (3 + 4));
+}
+static_assert(endpoint_attribute_chars() == (4 + 1) + (3 + 4));
 static_assert(ctxml::attributes(cfg).size() == 1);
 
 // childless elements iterate zero times

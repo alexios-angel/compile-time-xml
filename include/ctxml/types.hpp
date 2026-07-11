@@ -65,19 +65,21 @@ template <typename Name, typename Value> struct attribute {
 	using value_type = Value;
 };
 
-struct attribute_view {
+CTLL_EXPORT struct attribute_view {
 	std::string_view name;
 	std::string_view value;
 };
 
-struct attribute_range {
+CTLL_EXPORT struct attribute_range {
 	const attribute_view * data = nullptr;
 	size_t count = 0;
 	constexpr const attribute_view * begin() const noexcept { return data; }
 	constexpr const attribute_view * end() const noexcept { return data + (data ? count : 0); }
+	constexpr size_t size() const noexcept { return count; }
+	constexpr bool empty() const noexcept { return count == 0; }
 };
 
-struct node_view {
+CTLL_EXPORT struct node_view {
 	ctxml::kind type = kind::text;
 	std::string_view tag{};
 	std::string_view content{};
@@ -89,6 +91,7 @@ struct node_view {
 	constexpr std::string_view name() const noexcept { return tag; }
 	constexpr std::string_view text() const noexcept { return content; }
 	constexpr size_t child_count() const noexcept { return children; }
+	constexpr size_t size() const noexcept { return children; }
 	constexpr bool empty() const noexcept { return children == 0; }
 	constexpr node_view operator[](std::string_view name) const noexcept {
 		for (size_t i = 0; i < children; ++i)
@@ -293,6 +296,8 @@ struct element<Name, ctll::list<Attributes...>, Children...> {
 	constexpr node_view operator[](size_t index) const noexcept { return detail::view_of<element>()[index]; }
 	constexpr bool contains(std::string_view tag) const noexcept { return detail::view_of<element>().contains(tag); }
 	constexpr size_t count(std::string_view tag) const noexcept { return detail::view_of<element>().count(tag); }
+	constexpr std::string_view attribute(std::string_view name) const noexcept { return detail::view_of<element>().attribute(name); }
+	constexpr bool has_attribute(std::string_view name) const noexcept { return detail::view_of<element>().has_attribute(name); }
 
 private:
 #if CTLL_CNTTP_COMPILER_CHECK

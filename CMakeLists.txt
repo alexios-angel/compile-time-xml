@@ -49,7 +49,7 @@ option(CTXML_CONSTEXPR_LIMITS "Raise constexpr evaluation limits on the interfac
 option(CTXML_PCH "Precompile ctxml.hpp for tests and examples" ON)
 
 set(CTXML_CONSTEXPR_OPTIONS
-  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-fconstexpr-steps=500000000;-fconstexpr-depth=1024>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-fconstexpr-steps=500000000;-fconstexpr-depth=1024;-fbracket-depth=2048>
   $<$<CXX_COMPILER_ID:GNU>:-fconstexpr-ops-limit=3000000000;-fconstexpr-loop-limit=10000000;-fconstexpr-depth=1024>
   $<$<CXX_COMPILER_ID:MSVC>:/constexpr:steps500000000;/constexpr:depth1024>)
 

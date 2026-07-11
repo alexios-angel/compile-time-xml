@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <iostream>
 
-
 constexpr auto feed = ctxml::parse<R"(<feed version="1.0" updated="2026-07-11">
 	<title>release notes</title>
 	<entry id="1"><title>Brackets</title></entry>

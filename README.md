@@ -95,10 +95,9 @@ static_assert(ctxml::serialize(ctxml::parse<"<a  x = '1' >hi<b/></a>">())
 Brackets and iteration:
 
 ```c++
-
 doc["endpoint"];             // first matching child, as a uniform node_view
 doc[2];                      // child at position 2, as a uniform node_view
-doc["endpoint"].attribute("host");
+doc["endpoint"].attribute("host");   // runtime names; attribute<"host">() stays typed
 
 // begin/end yield uniform views (kind + name + text) from static storage,
 // so range-for and algorithms work - in constexpr evaluation included:
@@ -168,7 +167,7 @@ target carries the compiler-specific limit flags automatically
 (`CTXML_CONSTEXPR_LIMITS`, default ON) and the Makefiles set them:
 
 ```
-clang:  -fconstexpr-steps=500000000 -fconstexpr-depth=1024
+clang:  -fconstexpr-steps=500000000 -fconstexpr-depth=1024 -fbracket-depth=2048
 gcc:    -fconstexpr-ops-limit=3000000000 -fconstexpr-loop-limit=10000000 -fconstexpr-depth=1024
 ```
 
