@@ -1,10 +1,10 @@
 #ifndef CTXML__HPP
 #define CTXML__HPP
 
-#include "ctll/parser.hpp"
-#include "ctxml/xml.hpp"
+#include "ctlark.hpp"
+#include "ctxml/grammar.hpp"
 #include "ctxml/types.hpp"
-#include "ctxml/actions.hpp"
+#include "ctxml/bind.hpp"
 #include "ctxml/serialize.hpp"
 
 // ctxml: compile-time XML.
@@ -23,8 +23,11 @@
 // The document is parsed while your code compiles - malformed or
 // ill-formed XML (mismatched close tags, duplicate attributes) is a
 // compile error, or `false` from is_valid - and the result is a TYPE
-// whose accessors are all constexpr. Built on CTLL, the compile-time
-// LL(1) parser from the CTRE project.
+// whose accessors are all constexpr. The grammar layer is ctlark
+// (compile-time Lark): the XML grammar is a lark grammar string
+// (grammar.hpp) that only tokenizes because ctlark's lexing is
+// contextual, and bind.hpp lowers the parsed tree into the document
+// types, decoding entities and enforcing well-formedness on the way.
 
 namespace ctxml {
 
@@ -35,20 +38,33 @@ namespace ctxml {
 #define CTXML_STRING_INPUT const auto &
 #endif
 
+namespace detail {
+
+// grammar validity is a given (static_assert in grammar.hpp); input
+// validity is the parse plus the binder's well-formedness checks
+template <CTXML_STRING_INPUT input> constexpr bool valid_document() noexcept {
+	if constexpr (!ctlark::is_valid<xml_grammar, input, xml_start>) {
+		return false;
+	} else {
+		return bind<decltype(ctlark::parse<xml_grammar, input, xml_start>())>::ok;
+	}
+}
+
+} // namespace detail
+
 // does the input parse as well-formed XML (within the supported subset)?
 CTLL_EXPORT template <CTXML_STRING_INPUT input> constexpr bool is_valid =
-	ctll::parser<xml, input, xml_actions>::template correct_with<context<>>;
+	detail::valid_document<input>();
 
 // parse the input into its root element; invalid XML fails to compile
 CTLL_EXPORT template <CTXML_STRING_INPUT input> constexpr auto parse() noexcept {
-#if CTLL_CNTTP_COMPILER_CHECK
-	constexpr auto _input = input; // workaround for GCC 9 bug 88092
-#else
-	constexpr auto & _input = input; // C++17: the argument has linkage
-#endif
-	using parsed = typename ctll::parser<xml, _input, xml_actions>::template output<context<>>;
-	static_assert(parsed(), "ctxml: the input is not well-formed XML");
-	return ctll::front(typename parsed::output_type::stack_type{});
+	static_assert(is_valid<input>, "ctxml: the input is not well-formed XML");
+	if constexpr (is_valid<input>) {
+		using bound = detail::bind<decltype(ctlark::parse<detail::xml_grammar, input, detail::xml_start>())>;
+		return typename bound::type{};
+	} else {
+		return element<text<>, ctll::list<>>{};
+	}
 }
 
 } // namespace ctxml

@@ -111,19 +111,42 @@ static_assert(doc.template attribute<port_key>() == std::string_view{"8080"});
 
 ## How it works
 
-The same architecture as CTRE: an XML grammar
-([`xml.gram`](include/ctxml/xml.gram)) is compiled by
-[Tablewright](https://github.com/alexios-angel/Tablewright) into an
-LL(1) parse table of `rule()` overloads
-([`xml.hpp`](include/ctxml/xml.hpp)), which CTLL — the compile-time LL
-parser from CTRE — walks character by character. Semantic actions
-([`actions.hpp`](include/ctxml/actions.hpp)) build the document on a
-type stack: names and text accumulate as they are read, attributes pair
-up as they complete, and closing a tag collects the children back to
-its open marker — where the tag-match and attribute-uniqueness checks
-turn well-formedness violations into compile errors.
+The grammar layer is
+[ctlark](https://github.com/alexios-angel/compile-time-lark)
+(compile-time Lark): the XML grammar is a *lark grammar string*
+([`grammar.hpp`](include/ctxml/grammar.hpp)) that ctlark parses and
+compiles to constexpr tables while your code compiles, then runs its
+constexpr Earley parser over your document. XML only tokenizes because
+ctlark's lexing is **contextual**, like lark's: `TEXT` is a candidate
+only where character data is expected, so it cannot swallow attribute
+syntax inside a tag, and content whitespace survives while
+inter-attribute whitespace is ignored. The binder
+([`bind.hpp`](include/ctxml/bind.hpp)) lowers the lark tree into the
+document types - decoding entities, merging adjacent text with CDATA,
+dropping whitespace-only text nodes - and checks what a grammar
+cannot: the close tag must match its open tag (name equality is type
+equality), attribute names must be unique, and character references
+must denote valid code points; all folded into `is_valid`.
 
-Regenerate the table after editing the grammar with `make regrammar`.
+Because that work happens in headers, a **precompiled header** makes
+it a one-time cost: `make pch` (done automatically by the test build)
+compiles `ctxml.hpp` once - grammar parse, table build and all - and
+every translation unit that includes it afterwards starts from the
+baked result. The CMake tests and examples use
+`target_precompile_headers` the same way (`CTXML_PCH`, default ON).
+
+An Earley parse needs a raised constexpr budget; the CMake interface
+target carries the compiler-specific limit flags automatically
+(`CTXML_CONSTEXPR_LIMITS`, default ON) and the Makefiles set them:
+
+```
+clang:  -fconstexpr-steps=500000000 -fconstexpr-depth=1024
+gcc:    -fconstexpr-ops-limit=3000000000 -fconstexpr-loop-limit=10000000 -fconstexpr-depth=1024
+```
+
+The only generated parse table left in the tree is ctlark's own
+`lark.hpp` (the grammar of the Lark grammar language); regenerate it
+after editing `lark.gram` with `make regrammar`.
 
 ## Building and integrating
 

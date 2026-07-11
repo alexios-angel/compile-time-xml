@@ -25,10 +25,17 @@ API are original to this repository, but follow the architecture CTRE
 established (a Tablewright-generated LL(1) table driven by CTLL with
 semantic actions building a type-level result).
 
-The parse table include/ctxml/xml.hpp is generated from
-include/ctxml/xml.gram by Tablewright
+The parse table include/ctlark/lark.hpp is generated from
+include/ctlark/lark.gram by Tablewright
 (https://github.com/alexios-angel/Tablewright).
 
 Attribution for the parser architecture and the CTLL engine belongs to
 Hana Dusikova; this file preserves it as required by Section 4(c) of
 the Apache License 2.0.
+
+The grammar layer is ctlark
+(https://github.com/alexios-angel/compile-time-lark), vendored under
+include/ctlark/: the XML grammar is written in the Lark grammar
+language, designed by Erez Shinan and the lark-parser project
+(https://github.com/lark-parser/lark, MIT license); see ctlark's
+NOTICE for the full lineage.

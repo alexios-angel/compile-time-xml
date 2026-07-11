@@ -4,6 +4,7 @@ export module ctxml;
 import std;
 
 #define CTXML_IN_A_MODULE
+#define CTLARK_IN_A_MODULE
 #define CTLL_IN_A_MODULE
 
 using std::int16_t;

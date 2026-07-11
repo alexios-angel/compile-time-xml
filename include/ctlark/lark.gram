@@ -1,0 +1,537 @@
+# Grammar of the Lark grammar language, for ctlark.
+#
+# This file is the source of truth for include/ctlark/lark.hpp, the
+# LL(1) parse table that CTLL (the compile-time LL parser) walks
+# character by character over YOUR grammar text while your C++
+# compiles. It is the compile-time analogue of lark's own
+# lark/grammars/lark.lark. Regenerate the table with:
+#
+#     make regrammar
+#
+# which runs Tablewright (https://github.com/alexios-angel/Tablewright).
+# Run `tablewright --syntax` for the .gram dialect reference.
+#
+# Supported Lark subset (see README for the full contract):
+#   rule definitions        name : expansions        (modifiers ! ? _)
+#   terminal definitions    NAME : expansions        (priority NAME.2 :)
+#   alternatives            a | b, continuation lines starting with |
+#   quantifiers             x* x+ x?  and  x ~ 3, x ~ 3..5
+#   groups                  ( ... )   maybe [ ... ]
+#   atoms                   "string" (optional trailing i), "a".."z",
+#                           /regex/ (subset, flags i s honored),
+#                           rule and TERMINAL references
+#   aliases                 -> name   (top level of a rule alternative)
+#   statements              %ignore <expansions>,
+#                           %import path [-> NAME], %import path (A, B)
+#   comments                // to end of line
+#
+# Not parsed, by design (a compile error): %declare, %override,
+# %extend, rule/terminal templates name{...}, and inside regexes:
+# anchors, lookarounds, lazy quantifiers and backreferences.
+#
+# The semantic actions ([...]) are implemented in actions.hpp; they
+# build the type-level grammar AST that compile.hpp lowers to constexpr
+# tables. Everything after the parse - symbol resolution, terminal
+# NFAs, Earley - lives at the value level; this file only has to get
+# the SYNTAX of the grammar language right.
+
+# ---------------------------------------------------------------------------
+# Terminal sets: single characters with syntactic meaning
+# ---------------------------------------------------------------------------
+
+excl={!}
+quest={?}
+uscore={_}
+percent={%}
+colon={:}
+dot={.}
+minus={-}
+gt={>}
+pipe={|}
+lparen={(}
+rparen={)}
+lbracket={[}
+rbracket={]}
+lbrace={\{}
+rbrace={\}}
+star={*}
+plus={+}
+tilde={~}
+comma={\,}
+quote={\"}
+apos={'}
+backslash={\\}
+slash={/}
+caret={^}
+dollar={$}
+newline={\x0A}
+inline_ws={\x20,\x09,\x0D}
+digit={0,1,2,3,4,5,6,7,8,9}
+hexdig={0,1,2,3,4,5,6,7,8,9,a,b,c,d,e,f,A,B,C,D,E,F}
+
+# content sets (explicit complements; the implicit `other` set is unused)
+comment_char=sigma-{\x0A}
+str_char=sigma-{\",\\,\x0A}
+rx_char=sigma-{/,\\,(,),[,],\{,\},|,*,+,?,.,^,$,\x0A}
+cls_char=sigma-{],\\,-,^,\x0A}
+
+# ---------------------------------------------------------------------------
+# File structure: items separated by newlines, comments anywhere blank
+# ---------------------------------------------------------------------------
+
+lark_file-><skip>,<items>
+items-><item>,[end_item],<items> | epsilon
+
+# whitespace, newlines and comments between items and before | continuations
+skip->inline_ws,<skip>
+skip->newline,<skip>
+skip->slash,slash,<comment_tail>
+skip->epsilon
+comment_tail->comment_char,<comment_tail>
+comment_tail->newline,<skip>
+comment_tail->epsilon
+
+# ---------------------------------------------------------------------------
+# Items: rule definitions, terminal definitions, statements
+# ---------------------------------------------------------------------------
+
+item->excl,[mark_bang],<item_after_bang>
+item->quest,[mark_cond],<item_rule_name>
+item->uscore,[begin_name],[push_name_char],<item_uscore_run>
+item->[[a-z]],[begin_name],[push_name_char],<rule_name_tail>
+item->[[A-Z]],[begin_name],[push_name_char],<term_name_tail>
+item->percent,<statement>
+
+item_after_bang->quest,[mark_cond],<item_rule_name>
+item_after_bang-><item_rule_name>
+
+item_rule_name->uscore,[begin_name],[push_name_char],<item_uscore_rule>
+item_rule_name->[[a-z]],[begin_name],[push_name_char],<rule_name_tail>
+item_uscore_rule->uscore,[push_name_char],<item_uscore_rule>
+item_uscore_rule->[[a-z]],[push_name_char],<rule_name_tail>
+
+item_uscore_run->uscore,[push_name_char],<item_uscore_run>
+item_uscore_run->[[a-z]],[push_name_char],<rule_name_tail>
+item_uscore_run->[[A-Z]],[push_name_char],<term_name_tail>
+
+rule_name_tail->[[a-z0-9_]],[push_name_char],<rule_name_tail>
+rule_name_tail-><rule_def_post>
+term_name_tail->[[A-Z0-9_]],[push_name_char],<term_name_tail>
+term_name_tail-><term_def_post>
+
+# after the defined name: optional .priority, then the colon
+rule_def_post->inline_ws,<rule_def_post>
+rule_def_post->dot,<number>,<rule_def_post2>
+rule_def_post->colon,[def_rule],<ws>,<exp_atoms>
+rule_def_post2->inline_ws,<rule_def_post2>
+rule_def_post2->colon,[def_rule],<ws>,<exp_atoms>
+
+term_def_post->inline_ws,<term_def_post>
+term_def_post->dot,<number>,<term_def_post2>
+term_def_post->colon,[def_term],<ws>,<exp_atoms>
+term_def_post2->inline_ws,<term_def_post2>
+term_def_post2->colon,[def_term],<ws>,<exp_atoms>
+
+# signed integer, accumulated on the stack as a number node
+number->minus,[begin_number],[negate_number],digit,[push_number_digit],<number_tail>
+number->digit,[begin_number],[push_number_digit],<number_tail>
+number_tail->digit,[push_number_digit],<number_tail> | epsilon
+
+ws->inline_ws,<ws> | epsilon
+
+# ---------------------------------------------------------------------------
+# Expansions: sequences of atoms, alternatives, quantifiers, aliases.
+# One shared machine for rule bodies, terminal bodies, groups and
+# %ignore; the markers pushed by def_rule/def_term/open_group/
+# mark_ignore tell the actions what to fold at the closing action.
+# ---------------------------------------------------------------------------
+
+exp_atoms->inline_ws,<exp_atoms>
+exp_atoms->pipe,[branch],[new_branch],<exp_atoms>
+exp_atoms->star,[make_star],<exp_atoms>
+exp_atoms->plus,[make_plus],<exp_atoms>
+exp_atoms->quest,[make_opt],<exp_atoms>
+exp_atoms->tilde,<ws>,<number>,<exp_atoms_rep>
+exp_atoms->minus,gt,[branch],<ws>,<alias_name>
+exp_atoms->lparen,[open_group],[new_branch],<exp_atoms>
+exp_atoms->rparen,[close_group],<exp_atoms>
+exp_atoms->lbracket,[open_maybe],[new_branch],<exp_atoms>
+exp_atoms->rbracket,[close_maybe],<exp_atoms>
+exp_atoms->uscore,[begin_name],[push_name_char],<ref_uscore_run>
+exp_atoms->[[a-z]],[begin_name],[push_name_char],<rule_ref_tail>
+exp_atoms->[[A-Z]],[begin_name],[push_name_char],<term_ref_tail>
+exp_atoms->quote,[begin_string],<string_body>
+exp_atoms->slash,<regex_or_comment>
+exp_atoms->newline,[branch],<skip>,<exp_after_nl>
+exp_atoms->epsilon
+
+# a ~ 3  or  a ~ 3..5 : the pending number node is folded by the next
+# action (or end_item); only the range form needs explicit handling
+exp_atoms_rep->dot,dot,<ws>,<number>,[make_rep_range],<exp_atoms>
+exp_atoms_rep-><exp_atoms>
+
+# after a newline: | continues the current definition, else it ends
+exp_after_nl->pipe,[new_branch],<ws>,<exp_atoms>
+exp_after_nl->epsilon
+
+# alias: -> name, only at the end of an alternative
+alias_name->uscore,[begin_name],[push_name_char],<alias_uscore_run>
+alias_name->[[a-z]],[begin_name],[push_name_char],<alias_tail>
+alias_uscore_run->uscore,[push_name_char],<alias_uscore_run>
+alias_uscore_run->[[a-z]],[push_name_char],<alias_tail>
+alias_tail->[[a-z0-9_]],[push_name_char],<alias_tail>
+alias_tail->[attach_alias],<after_alias>
+
+after_alias->inline_ws,<after_alias>
+after_alias->pipe,[new_branch],<ws>,<exp_atoms>
+after_alias->newline,<skip>,<exp_after_nl>
+after_alias->slash,slash,<comment_tail>,<exp_after_nl>
+after_alias->epsilon
+
+# references: lowercase = rule, uppercase = terminal, leading
+# underscores are part of the name (the letter decides the kind)
+ref_uscore_run->uscore,[push_name_char],<ref_uscore_run>
+ref_uscore_run->[[a-z]],[push_name_char],<rule_ref_tail>
+ref_uscore_run->[[A-Z]],[push_name_char],<term_ref_tail>
+rule_ref_tail->[[a-z0-9_]],[push_name_char],<rule_ref_tail>
+rule_ref_tail->[make_rule_ref],<after_rule_ref>
+term_ref_tail->[[A-Z0-9_]],[push_name_char],<term_ref_tail>
+term_ref_tail->[make_term_ref],<after_term_ref>
+
+# after a reference ends at a name boundary: same dispatch as
+# exp_atoms, but an adjacent name character of the same case would have
+# been part of the name (maximal munch), so only the other case starts
+# a new reference here
+after_rule_ref->inline_ws,<exp_atoms>
+after_rule_ref->pipe,[branch],[new_branch],<exp_atoms>
+after_rule_ref->star,[make_star],<exp_atoms>
+after_rule_ref->plus,[make_plus],<exp_atoms>
+after_rule_ref->quest,[make_opt],<exp_atoms>
+after_rule_ref->tilde,<ws>,<number>,<exp_atoms_rep>
+after_rule_ref->minus,gt,[branch],<ws>,<alias_name>
+after_rule_ref->lparen,[open_group],[new_branch],<exp_atoms>
+after_rule_ref->rparen,[close_group],<exp_atoms>
+after_rule_ref->lbracket,[open_maybe],[new_branch],<exp_atoms>
+after_rule_ref->rbracket,[close_maybe],<exp_atoms>
+after_rule_ref->[[A-Z]],[begin_name],[push_name_char],<term_ref_tail>
+after_rule_ref->quote,[begin_string],<string_body>
+after_rule_ref->slash,<regex_or_comment>
+after_rule_ref->newline,[branch],<skip>,<exp_after_nl>
+after_rule_ref->epsilon
+
+after_term_ref->inline_ws,<exp_atoms>
+after_term_ref->pipe,[branch],[new_branch],<exp_atoms>
+after_term_ref->star,[make_star],<exp_atoms>
+after_term_ref->plus,[make_plus],<exp_atoms>
+after_term_ref->quest,[make_opt],<exp_atoms>
+after_term_ref->tilde,<ws>,<number>,<exp_atoms_rep>
+after_term_ref->minus,gt,[branch],<ws>,<alias_name>
+after_term_ref->lparen,[open_group],[new_branch],<exp_atoms>
+after_term_ref->rparen,[close_group],<exp_atoms>
+after_term_ref->lbracket,[open_maybe],[new_branch],<exp_atoms>
+after_term_ref->rbracket,[close_maybe],<exp_atoms>
+after_term_ref->[[a-z]],[begin_name],[push_name_char],<rule_ref_tail>
+after_term_ref->quote,[begin_string],<string_body>
+after_term_ref->slash,<regex_or_comment>
+after_term_ref->newline,[branch],<skip>,<exp_after_nl>
+after_term_ref->epsilon
+
+# ---------------------------------------------------------------------------
+# String literals: "..." with escapes, optional i flag, optional ..
+# range ("a".."z"). The accumulated characters fold to a literal node.
+# ---------------------------------------------------------------------------
+
+string_body->str_char,[push_str_char],<string_body>
+string_body->backslash,<string_escape>
+string_body->quote,[end_string],<string_post>
+
+string_escape->n,[push_esc_code],<string_body>
+string_escape->t,[push_esc_code],<string_body>
+string_escape->r,[push_esc_code],<string_body>
+string_escape->f,[push_esc_code],<string_body>
+string_escape->quote,[push_esc_char],<string_body>
+string_escape->apos,[push_esc_char],<string_body>
+string_escape->backslash,[push_esc_char],<string_body>
+string_escape->slash,[push_esc_char],<string_body>
+string_escape->x,hexdig,[push_hex_high],hexdig,[push_hex_low],<string_body>
+
+string_post->i,[mark_ci],<string_post_i>
+string_post->dot,dot,<ws>,<range_second>
+string_post->uscore,[begin_name],[push_name_char],<ref_uscore_run>
+string_post->[[a-hj-z]],[begin_name],[push_name_char],<rule_ref_tail>
+string_post->[[A-Z]],[begin_name],[push_name_char],<term_ref_tail>
+string_post->inline_ws,<exp_atoms>
+string_post->pipe,[branch],[new_branch],<exp_atoms>
+string_post->star,[make_star],<exp_atoms>
+string_post->plus,[make_plus],<exp_atoms>
+string_post->quest,[make_opt],<exp_atoms>
+string_post->tilde,<ws>,<number>,<exp_atoms_rep>
+string_post->minus,gt,[branch],<ws>,<alias_name>
+string_post->lparen,[open_group],[new_branch],<exp_atoms>
+string_post->rparen,[close_group],<exp_atoms>
+string_post->lbracket,[open_maybe],[new_branch],<exp_atoms>
+string_post->rbracket,[close_maybe],<exp_atoms>
+string_post->quote,[begin_string],<string_body>
+string_post->slash,<regex_or_comment>
+string_post->newline,[branch],<skip>,<exp_after_nl>
+string_post->epsilon
+string_post_i->dot,dot,<ws>,<range_second>
+string_post_i-><exp_atoms>
+
+range_second->quote,[begin_string],<range_string_body>
+range_string_body->str_char,[push_str_char],<range_string_body>
+range_string_body->backslash,<range_string_escape>
+range_string_body->quote,[end_string],[make_char_range],<exp_atoms>
+
+range_string_escape->n,[push_esc_code],<range_string_body>
+range_string_escape->t,[push_esc_code],<range_string_body>
+range_string_escape->r,[push_esc_code],<range_string_body>
+range_string_escape->f,[push_esc_code],<range_string_body>
+range_string_escape->quote,[push_esc_char],<range_string_body>
+range_string_escape->apos,[push_esc_char],<range_string_body>
+range_string_escape->backslash,[push_esc_char],<range_string_body>
+range_string_escape->slash,[push_esc_char],<range_string_body>
+range_string_escape->x,hexdig,[push_hex_high],hexdig,[push_hex_low],<range_string_body>
+
+# ---------------------------------------------------------------------------
+# Regex literals: /.../flags - a structural subset parsed into the same
+# expression nodes as the grammar language itself. At an atom position
+# // is a comment (an empty regex is not valid); anything else after
+# the first / is the regex body.
+# ---------------------------------------------------------------------------
+
+regex_or_comment->slash,[branch],<comment_tail>,<exp_after_nl>
+regex_or_comment->[open_regex],[new_branch],<rx_first>
+
+# the first item of a regex body: same dispatch as rx_atoms minus the
+# closing /, which as the second character means a comment instead
+rx_first->rx_char,[rx_push_char],<rx_atoms>
+rx_first->dot,[rx_dot],<rx_atoms>
+rx_first->pipe,[branch],[new_branch],<rx_atoms>
+rx_first->lparen,<rx_group_open>
+rx_first->lbracket,<rx_class_open>
+rx_first->backslash,<rx_escape>
+
+rx_atoms->rx_char,[rx_push_char],<rx_atoms>
+rx_atoms->dot,[rx_dot],<rx_atoms>
+rx_atoms->pipe,[branch],[new_branch],<rx_atoms>
+rx_atoms->star,[make_star],<rx_atoms>
+rx_atoms->plus,[make_plus],<rx_atoms>
+rx_atoms->quest,[make_opt],<rx_atoms>
+rx_atoms->lparen,<rx_group_open>
+rx_atoms->rparen,[close_group],<rx_atoms>
+rx_atoms->lbracket,<rx_class_open>
+rx_atoms->lbrace,<ws>,<number>,<rx_brace>
+rx_atoms->backslash,<rx_escape>
+rx_atoms->slash,[close_regex],<rx_flags>
+
+# (?: opens a plain group; other (?... forms are unsupported. A bare
+# ( cannot be followed by a quantifier, so ? always introduces ?:
+rx_group_open->quest,colon,[open_group],[new_branch],<rx_atoms>
+rx_group_open->[open_group],[new_branch],<rx_group_first>
+
+rx_group_first->rx_char,[rx_push_char],<rx_atoms>
+rx_group_first->dot,[rx_dot],<rx_atoms>
+rx_group_first->pipe,[branch],[new_branch],<rx_atoms>
+rx_group_first->star,[make_star],<rx_atoms>
+rx_group_first->plus,[make_plus],<rx_atoms>
+rx_group_first->lparen,<rx_group_open>
+rx_group_first->rparen,[close_group],<rx_atoms>
+rx_group_first->lbracket,<rx_class_open>
+rx_group_first->lbrace,<ws>,<number>,<rx_brace>
+rx_group_first->backslash,<rx_escape>
+rx_group_first->slash,[close_regex],<rx_flags>
+
+# {n} {n,} {n,m}
+rx_brace->rbrace,[make_rep_exact],<rx_atoms>
+rx_brace->comma,<ws>,<rx_brace2>
+rx_brace2->rbrace,[make_rep_open],<rx_atoms>
+rx_brace2->digit,[begin_number],[push_number_digit],<number_tail>,rbrace,[make_rep_range],<rx_atoms>
+
+rx_escape->n,[rx_esc_code],<rx_atoms>
+rx_escape->t,[rx_esc_code],<rx_atoms>
+rx_escape->r,[rx_esc_code],<rx_atoms>
+rx_escape->f,[rx_esc_code],<rx_atoms>
+rx_escape->w,[rx_class_word],<rx_atoms>
+rx_escape->d,[rx_class_digit],<rx_atoms>
+rx_escape->s,[rx_class_space],<rx_atoms>
+rx_escape->W,[rx_class_not_word],<rx_atoms>
+rx_escape->D,[rx_class_not_digit],<rx_atoms>
+rx_escape->S,[rx_class_not_space],<rx_atoms>
+rx_escape->x,hexdig,[push_hex_high],hexdig,[rx_hex_char],<rx_atoms>
+rx_escape->dot,[rx_push_char],<rx_atoms>
+rx_escape->star,[rx_push_char],<rx_atoms>
+rx_escape->plus,[rx_push_char],<rx_atoms>
+rx_escape->quest,[rx_push_char],<rx_atoms>
+rx_escape->lparen,[rx_push_char],<rx_atoms>
+rx_escape->rparen,[rx_push_char],<rx_atoms>
+rx_escape->lbracket,[rx_push_char],<rx_atoms>
+rx_escape->rbracket,[rx_push_char],<rx_atoms>
+rx_escape->lbrace,[rx_push_char],<rx_atoms>
+rx_escape->rbrace,[rx_push_char],<rx_atoms>
+rx_escape->pipe,[rx_push_char],<rx_atoms>
+rx_escape->slash,[rx_push_char],<rx_atoms>
+rx_escape->backslash,[rx_push_char],<rx_atoms>
+rx_escape->minus,[rx_push_char],<rx_atoms>
+rx_escape->caret,[rx_push_char],<rx_atoms>
+rx_escape->dollar,[rx_push_char],<rx_atoms>
+rx_escape->comma,[rx_push_char],<rx_atoms>
+
+# flags: i (case-insensitive) and s (dot matches newline) are honored,
+# m l u are accepted and ignored
+rx_flags->i,[rx_flag_ci],<rx_flags>
+rx_flags->s,[rx_flag_dotall],<rx_flags>
+rx_flags->m,<rx_flags>
+rx_flags->l,<rx_flags>
+rx_flags->u,<rx_flags>
+rx_flags->uscore,[begin_name],[push_name_char],<ref_uscore_run>
+rx_flags->[[a-hj-kn-rtv-z]],[begin_name],[push_name_char],<rule_ref_tail>
+rx_flags->[[A-Z]],[begin_name],[push_name_char],<term_ref_tail>
+rx_flags->inline_ws,<exp_atoms>
+rx_flags->pipe,[branch],[new_branch],<exp_atoms>
+rx_flags->star,[make_star],<exp_atoms>
+rx_flags->plus,[make_plus],<exp_atoms>
+rx_flags->quest,[make_opt],<exp_atoms>
+rx_flags->tilde,<ws>,<number>,<exp_atoms_rep>
+rx_flags->minus,gt,[branch],<ws>,<alias_name>
+rx_flags->lparen,[open_group],[new_branch],<exp_atoms>
+rx_flags->rparen,[close_group],<exp_atoms>
+rx_flags->lbracket,[open_maybe],[new_branch],<exp_atoms>
+rx_flags->rbracket,[close_maybe],<exp_atoms>
+rx_flags->quote,[begin_string],<string_body>
+rx_flags->slash,<regex_or_comment>
+rx_flags->newline,[branch],<skip>,<exp_after_nl>
+rx_flags->epsilon
+
+# character classes: [...] and [^...], with ranges a-z, escapes, and
+# a literal - just before the closing bracket
+rx_class_open->caret,[open_class],[mark_class_neg],<cls_first>
+rx_class_open->[open_class],<cls_first_pos>
+
+cls_first->rbracket,[cls_push_rbracket],<cls_items>
+cls_first->cls_char,[cls_push_char],<cls_after_char>
+cls_first->caret,[cls_push_char],<cls_after_char>
+cls_first->minus,[cls_push_char],<cls_after_char>
+cls_first->backslash,<cls_escape>
+
+# first item of a positive class: a leading ^ would have meant negation
+# and a leading - is a literal dash
+cls_first_pos->rbracket,[cls_push_rbracket],<cls_items>
+cls_first_pos->cls_char,[cls_push_char],<cls_after_char>
+cls_first_pos->minus,[cls_push_char],<cls_after_char>
+cls_first_pos->backslash,<cls_escape>
+
+cls_items->cls_char,[cls_push_char],<cls_after_char>
+cls_items->caret,[cls_push_char],<cls_after_char>
+cls_items->backslash,<cls_escape>
+cls_items->rbracket,[close_class],<rx_atoms>
+
+cls_after_char->minus,<cls_range_end>
+cls_after_char-><cls_items>
+
+cls_range_end->cls_char,[cls_make_range],<cls_after_range>
+cls_range_end->caret,[cls_make_range],<cls_after_range>
+cls_range_end->backslash,<cls_range_escape>
+cls_range_end->rbracket,[cls_push_minus],[close_class],<rx_atoms>
+cls_after_range-><cls_items>
+
+cls_escape->n,[cls_esc_code],<cls_after_char>
+cls_escape->t,[cls_esc_code],<cls_after_char>
+cls_escape->r,[cls_esc_code],<cls_after_char>
+cls_escape->f,[cls_esc_code],<cls_after_char>
+cls_escape->w,[cls_class_word],<cls_items>
+cls_escape->d,[cls_class_digit],<cls_items>
+cls_escape->s,[cls_class_space],<cls_items>
+cls_escape->W,[cls_class_not_word],<cls_items>
+cls_escape->D,[cls_class_not_digit],<cls_items>
+cls_escape->S,[cls_class_not_space],<cls_items>
+cls_escape->x,hexdig,[push_hex_high],hexdig,[cls_hex_char],<cls_after_char>
+cls_escape->backslash,[cls_esc_char],<cls_after_char>
+cls_escape->rbracket,[cls_esc_char],<cls_after_char>
+cls_escape->lbracket,[cls_esc_char],<cls_after_char>
+cls_escape->minus,[cls_esc_char],<cls_after_char>
+cls_escape->caret,[cls_esc_char],<cls_after_char>
+cls_escape->slash,[cls_esc_char],<cls_after_char>
+cls_escape->dot,[cls_esc_char],<cls_after_char>
+cls_escape->star,[cls_esc_char],<cls_after_char>
+cls_escape->plus,[cls_esc_char],<cls_after_char>
+cls_escape->quest,[cls_esc_char],<cls_after_char>
+cls_escape->dollar,[cls_esc_char],<cls_after_char>
+
+cls_range_escape->n,[cls_range_esc_code],<cls_after_range>
+cls_range_escape->t,[cls_range_esc_code],<cls_after_range>
+cls_range_escape->r,[cls_range_esc_code],<cls_after_range>
+cls_range_escape->f,[cls_range_esc_code],<cls_after_range>
+cls_range_escape->x,hexdig,[push_hex_high],hexdig,[cls_range_hex_char],<cls_after_range>
+cls_range_escape->backslash,[cls_range_esc_char],<cls_after_range>
+cls_range_escape->rbracket,[cls_range_esc_char],<cls_after_range>
+cls_range_escape->lbracket,[cls_range_esc_char],<cls_after_range>
+cls_range_escape->minus,[cls_range_esc_char],<cls_after_range>
+cls_range_escape->caret,[cls_range_esc_char],<cls_after_range>
+
+# ---------------------------------------------------------------------------
+# Statements: %ignore <expansions>, %import path [-> NAME] and
+# %import path (A, B). %declare/%override/%extend are not supported.
+# ---------------------------------------------------------------------------
+
+statement->i,<statement_i>
+statement_i->g,n,o,r,e,[mark_ignore],[new_branch],<ws>,<exp_atoms>
+statement_i->m,p,o,r,t,[mark_import],<ws1>,<import_path>
+
+ws1->inline_ws,<ws>
+
+import_path->uscore,[begin_name],[push_name_char],<import_seg_run>
+import_path->[[a-z]],[begin_name],[push_name_char],<import_seg_lc>
+import_path->[[A-Z]],[begin_name],[push_name_char],<import_seg_uc>
+import_seg_run->uscore,[push_name_char],<import_seg_run>
+import_seg_run->[[a-z]],[push_name_char],<import_seg_lc>
+import_seg_run->[[A-Z]],[push_name_char],<import_seg_uc>
+import_seg_lc->[[a-z0-9_]],[push_name_char],<import_seg_lc>
+import_seg_lc->[import_seg],<import_post>
+import_seg_uc->[[A-Z0-9_]],[push_name_char],<import_seg_uc>
+import_seg_uc->[import_seg],<import_post>
+
+import_post->dot,<import_path>
+import_post->inline_ws,<import_post2>
+import_post->newline,<skip>
+import_post->slash,slash,<comment_tail>
+import_post->epsilon
+import_post2->inline_ws,<import_post2>
+import_post2->minus,gt,<ws>,<import_alias_name>
+import_post2->lparen,<ws>,<import_list_name>
+import_post2->newline,<skip>
+import_post2->slash,slash,<comment_tail>
+import_post2->epsilon
+
+import_alias_name->uscore,[begin_name],[push_name_char],<import_alias_run>
+import_alias_name->[[a-z]],[begin_name],[push_name_char],<import_alias_lc>
+import_alias_name->[[A-Z]],[begin_name],[push_name_char],<import_alias_uc>
+import_alias_run->uscore,[push_name_char],<import_alias_run>
+import_alias_run->[[a-z]],[push_name_char],<import_alias_lc>
+import_alias_run->[[A-Z]],[push_name_char],<import_alias_uc>
+import_alias_lc->[[a-z0-9_]],[push_name_char],<import_alias_lc>
+import_alias_lc->[import_alias],<line_end>
+import_alias_uc->[[A-Z0-9_]],[push_name_char],<import_alias_uc>
+import_alias_uc->[import_alias],<line_end>
+
+import_list_name->uscore,[begin_name],[push_name_char],<import_list_run>
+import_list_name->[[a-z]],[begin_name],[push_name_char],<import_list_lc>
+import_list_name->[[A-Z]],[begin_name],[push_name_char],<import_list_uc>
+import_list_run->uscore,[push_name_char],<import_list_run>
+import_list_run->[[a-z]],[push_name_char],<import_list_lc>
+import_list_run->[[A-Z]],[push_name_char],<import_list_uc>
+import_list_lc->[[a-z0-9_]],[push_name_char],<import_list_lc>
+import_list_lc->[import_list_add],<import_list_post>
+import_list_uc->[[A-Z0-9_]],[push_name_char],<import_list_uc>
+import_list_uc->[import_list_add],<import_list_post>
+
+import_list_post->inline_ws,<import_list_post>
+import_list_post->comma,<ws>,<import_list_name>
+import_list_post->rparen,<line_end>
+
+# end of a statement line: inline whitespace, an optional comment, then
+# newline(s) or end of input
+line_end->inline_ws,<line_end>
+line_end->newline,<skip>
+line_end->slash,slash,<comment_tail>
+line_end->epsilon
