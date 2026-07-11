@@ -1,0 +1,39 @@
+name: Tests
+on: [push, pull_request]
+jobs:
+  gcc:
+    strategy:
+      matrix:
+        gcc: [10, 12, 14]
+        standard: [17, 20]
+      fail-fast: false
+    name: "GCC ${{ matrix.gcc }} (C++${{ matrix.standard }})"
+    runs-on: ubuntu-latest
+    steps:
+      - run: sudo apt-get install g++-${{ matrix.gcc }}
+      - uses: actions/checkout@v4
+      - run: make CXX=g++-${{ matrix.gcc }} CXX_STANDARD=${{ matrix.standard }}
+  clang:
+    strategy:
+      matrix:
+        clang: [14, 16, 18]
+        standard: [17, 20]
+      fail-fast: false
+    name: "Clang ${{ matrix.clang }} (C++${{ matrix.standard }})"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Install Clang"
+        uses: egor-tensin/setup-clang@v1
+        with:
+          version: ${{ matrix.clang }}
+      - uses: actions/checkout@v4
+      - run: make CXX=clang++ CXX_STANDARD=${{ matrix.standard }}
+  cmake:
+    name: "CMake (configure, build, ctest)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build -j
+      - run: ctest --test-dir build --output-on-failure
+      - run: cmake --install build --prefix "$PWD/prefix"

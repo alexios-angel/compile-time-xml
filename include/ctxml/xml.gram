@@ -1,0 +1,166 @@
+# XML grammar for ctxml (a well-defined subset of XML 1.0).
+#
+# This file is the source of truth for include/ctxml/xml.hpp, the LL(1)
+# parse table that CTLL (the compile-time LL parser) walks character by
+# character while your C++ compiles. Regenerate with:
+#
+#     make regrammar
+#
+# which runs Tablewright (https://github.com/alexios-angel/Tablewright).
+# Run `tablewright --syntax` for the .gram dialect reference.
+#
+# Supported: one root element; nested elements with attributes (both
+# quote flavours) and self-closing forms; mixed text content; the five
+# predefined entities plus decimal and hexadecimal character references
+# (decoded to UTF-8 at parse time); <!-- comments --> (with the spec's
+# no "--" rule enforced); <![CDATA[ ... ]]> sections; processing
+# instructions and the XML declaration (skipped). Names take the ASCII
+# name characters plus every byte above 0x7F, so UTF-8 names work.
+#
+# Well-formedness beyond the grammar lives in the semantic actions
+# (actions.hpp): a close tag must match its open tag and attribute
+# names must be unique within an element - both are compile errors.
+#
+# Not supported, by design (a compile error, documented in the README):
+# DOCTYPE declarations and DTDs, custom entities, namespace semantics
+# (colons in names are just name characters), and encodings other than
+# UTF-8/ASCII. Whitespace-only text nodes between elements are dropped
+# from the document.
+
+# ---------------------------------------------------------------------------
+# Terminal sets
+# ---------------------------------------------------------------------------
+
+lt={<}
+gt={>}
+slash={/}
+eq={=}
+amp={&}
+semi={;}
+hash={\#}
+quote={\"}
+squote={'}
+excl={!}
+quest={?}
+minus={-}
+lbracket={[}
+rbracket={]}
+digit={0,1,2,3,4,5,6,7,8,9}
+hexdig={0,1,2,3,4,5,6,7,8,9,a,b,c,d,e,f,A,B,C,D,E,F}
+
+# XML whitespace
+ws_char={\x20,\x09,\x0A,\x0D}
+
+# name characters: ASCII letters, digits, _ : . - and every byte above
+# 0x7F (so UTF-8 names pass through); the start set additionally
+# excludes digits, '.' and '-' per the spec
+name_start_chars=sigma-{\x00,\x01,\x02,\x03,\x04,\x05,\x06,\x07,\x08,\x09,\x0A,\x0B,\x0C,\x0D,\x0E,\x0F,\x10,\x11,\x12,\x13,\x14,\x15,\x16,\x17,\x18,\x19,\x1A,\x1B,\x1C,\x1D,\x1E,\x1F,\x20,!,\",\#,$,%,&,',(,),*,+,\,,-,.,/,0,1,2,3,4,5,6,7,8,9,;,<,=,>,?,@,[,\\,],^,`,\{,|,\},~,\x7F}
+name_chars=sigma-{\x00,\x01,\x02,\x03,\x04,\x05,\x06,\x07,\x08,\x09,\x0A,\x0B,\x0C,\x0D,\x0E,\x0F,\x10,\x11,\x12,\x13,\x14,\x15,\x16,\x17,\x18,\x19,\x1A,\x1B,\x1C,\x1D,\x1E,\x1F,\x20,!,\",\#,$,%,&,',(,),*,+,\,,/,;,<,=,>,?,@,[,\\,],^,`,\{,|,\},~,\x7F}
+
+# character data: everything except the markup starters
+text_chars=sigma-{<,&}
+
+# attribute values: additionally no raw quote of the wrapping flavour;
+# a raw '<' is forbidden in attribute values by the spec
+attval_dq_chars=sigma-{\",&,<}
+attval_sq_chars=sigma-{',&,<}
+
+# comment content, split around '-' so the "--" rule can be enforced
+comment_chars=sigma-{-}
+
+# CDATA content, split around ']'
+cdata_chars=sigma-{]}
+
+# processing instruction content, split around '?'
+pi_chars=sigma-{?}
+
+# ---------------------------------------------------------------------------
+# Document: prolog misc, one root element, trailing misc
+# ---------------------------------------------------------------------------
+
+document-><misc>,lt,<after_lt_prolog>
+after_lt_prolog->excl,minus,minus,<comment_body>,<misc>,lt,<after_lt_prolog>
+after_lt_prolog->quest,<pi_body>,<misc>,lt,<after_lt_prolog>
+after_lt_prolog->name_start_chars,[begin_name],[push_name_char],<name_tail>,<element_after_name>,<epilog>
+
+epilog-><misc>,<epilog_more>
+epilog_more->lt,<after_lt_epilog>,<epilog> | epsilon
+after_lt_epilog->excl,minus,minus,<comment_body>
+after_lt_epilog->quest,<pi_body>
+
+misc->ws_char,<misc> | epsilon
+
+# ---------------------------------------------------------------------------
+# Elements
+# ---------------------------------------------------------------------------
+
+name_tail->name_chars,[push_name_char],<name_tail> | epsilon
+
+# after "<name": attributes separated by whitespace, then /> or >
+element_after_name->[open_element],<attributes>
+attributes->slash,gt,[finish_self_closing]
+attributes->gt,[finish_open_tag],<content>
+attributes->ws_char,<misc>,<attributes_after_ws>
+attributes_after_ws->slash,gt,[finish_self_closing]
+attributes_after_ws->gt,[finish_open_tag],<content>
+attributes_after_ws->name_start_chars,[begin_name],[push_name_char],<name_tail>,[attribute_name],<misc>,eq,<misc>,<attribute_value>,<attributes>
+
+attribute_value->quote,(attval_dq_chars,[push_text_char])*,<attval_dq_more>
+attribute_value->squote,(attval_sq_chars,[push_text_char])*,<attval_sq_more>
+attval_dq_more->quote,[make_attribute] | amp,<entity>,(attval_dq_chars,[push_text_char])*,<attval_dq_more>
+attval_sq_more->squote,[make_attribute] | amp,<entity>,(attval_sq_chars,[push_text_char])*,<attval_sq_more>
+
+# ---------------------------------------------------------------------------
+# Content: text, child elements, entities, comments, CDATA, PIs; ends
+# at the matching close tag
+# ---------------------------------------------------------------------------
+
+content->text_chars,[push_text_char],<content>
+content->amp,<entity>,<content>
+content->lt,<after_lt_content>
+
+after_lt_content->slash,name_start_chars,[begin_name],[push_name_char],<name_tail>,<misc>,gt,[end_element]
+after_lt_content->name_start_chars,[begin_name],[push_name_char],<name_tail>,<element_after_name>,<content>
+after_lt_content->excl,<bang_content>
+after_lt_content->quest,<pi_body>,<content>
+
+bang_content->minus,minus,<comment_body>,<content>
+bang_content->lbracket,"CDATA",lbracket,<cdata_body>,<content>
+
+# ---------------------------------------------------------------------------
+# Entities: the five predefined ones and character references
+# ---------------------------------------------------------------------------
+
+entity->l,t,semi,[entity_lt]
+entity->g,t,semi,[entity_gt]
+entity->a,<entity_a>
+entity->q,u,o,t,semi,[entity_quot]
+entity->hash,<char_reference>
+entity_a->m,p,semi,[entity_amp]
+entity_a->p,o,s,semi,[entity_apos]
+
+char_reference->x,hexdig,[begin_hex],[push_hex],<hex_reference_tail>
+char_reference->digit,[begin_dec],[push_dec],<dec_reference_tail>
+hex_reference_tail->hexdig,[push_hex],<hex_reference_tail> | semi,[end_char_reference]
+dec_reference_tail->digit,[push_dec],<dec_reference_tail> | semi,[end_char_reference]
+
+# ---------------------------------------------------------------------------
+# Comments (no "--" inside, per the spec), CDATA, and processing
+# instructions
+# ---------------------------------------------------------------------------
+
+comment_body->comment_chars,<comment_body>
+comment_body->minus,<comment_after_minus>
+comment_after_minus->minus,gt | comment_chars,<comment_body>
+
+cdata_body->cdata_chars,[push_text_char],<cdata_body>
+cdata_body->rbracket,<cdata_after_rb>
+cdata_after_rb->rbracket,<cdata_after_rbrb>
+cdata_after_rb->cdata_chars,[cdata_bracket_and_char],<cdata_body>
+cdata_after_rbrb->gt
+cdata_after_rbrb->rbracket,[cdata_bracket],<cdata_after_rbrb>
+cdata_after_rbrb->cdata_chars,[cdata_brackets_and_char],<cdata_body>
+
+pi_body->pi_chars,<pi_body>
+pi_body->quest,<pi_after_quest>
+pi_after_quest->gt | quest,<pi_after_quest> | pi_chars,<pi_body>

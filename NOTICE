@@ -1,0 +1,34 @@
+This repository ("compile-time-xml" / ctxml) is a derivative work
+built on:
+
+    notre (a fork of Compile Time Regular Expressions)
+    https://github.com/alexios-angel/notre
+
+which is itself a derivative of:
+
+    Compile Time Regular Expressions (CTRE)
+    https://github.com/hanickadot/compile-time-regular-expressions
+    Copyright (c) Hana Dusikova and the CTRE contributors
+
+License: Apache License 2.0, with LLVM Exceptions (see LICENSE in this
+repository, reproduced unmodified from upstream).
+
+What is derived
+---------------
+The include/ctll/ directory (the CTLL compile-time LL(1) parser,
+ctll::fixed_string and supporting headers) is copied from notre, where
+it descends from Hana Dusikova's CTRE with modifications. The build and
+packaging scaffolding follows the sibling projects compile-time-json
+and compile-time-json5 (https://github.com/alexios-angel/). The XML
+grammar, parse table, document types, semantic actions and the ctxml
+API are original to this repository, but follow the architecture CTRE
+established (a Tablewright-generated LL(1) table driven by CTLL with
+semantic actions building a type-level result).
+
+The parse table include/ctxml/xml.hpp is generated from
+include/ctxml/xml.gram by Tablewright
+(https://github.com/alexios-angel/Tablewright).
+
+Attribution for the parser architecture and the CTLL engine belongs to
+Hana Dusikova; this file preserves it as required by Section 4(c) of
+the Apache License 2.0.
