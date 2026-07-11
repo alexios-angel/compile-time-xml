@@ -9,3 +9,4 @@ also build and run as tests through CMake/CTest.
 | [`config.cpp`](config.cpp) | an XML configuration baked into the binary: compile-time requirement checks, attribute values as constants, iteration over endpoints |
 | [`wellformed.cpp`](wellformed.cpp) | `is_valid` as a bool: grammar rejections and the semantic well-formedness checks (tag matching, attribute uniqueness) |
 | [`introspection.cpp`](introspection.cpp) | a generic recursive visitor over any document: kind dispatch, attribute/child iteration, compile-time re-serialization |
+| [`iteration.cpp`](iteration.cpp) | brackets and iteration: `_k`/`_i` lookups with `operator[]`, children and attributes as uniform views with range-for and `<algorithm>` |

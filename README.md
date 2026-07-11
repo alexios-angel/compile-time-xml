@@ -76,7 +76,7 @@ nodes:
 
 | Type | Accessors |
 |------|-----------|
-| `element<name, attrs, children...>` | `name()`, `attribute<"key">()`, `has_attribute<"key">()`, `attribute_count()`, positional `attribute_name<I>()` / `attribute_value<I>()`, `get<"tag">()` (first matching child element), `contains<"tag">()`, `count<"tag">()`, `child<I>()`, `child_count()`, `empty()`, `text()` |
+| `element<name, attrs, children...>` | `name()`, `attribute<"key">()`, `has_attribute<"key">()`, `attribute_count()`, positional `attribute_name<I>()` / `attribute_value<I>()`, `get<"tag">()` / `["tag"_k]` (first matching child element), `contains<"tag">()`, `count<"tag">()`, `child<I>()` / `[N_i]`, `child_count()`, `empty()`, `text()` |
 | `text<chars...>` | `view()`, `c_str()` (null-terminated), `size()`, `empty()`, `==` with `std::string_view` |
 
 Every type carries `static constexpr ctxml::kind type` for
@@ -117,7 +117,10 @@ for (const auto & a : ctxml::attributes(doc)) {
 distinct types, so the tag or index must be a *type* — `"..."_k` (C++20)
 or any `text` name type, and `N_i` for positions (both work in C++17).
 Iterators hand out *views* for the same reason; when you need the child
-itself, with its own accessors, `for_each_child` is the tool.
+itself, with its own accessors, `for_each_child` is the tool. The
+records are `node_view` and `attribute_view`
+([`views.hpp`](include/ctxml/views.hpp)), and
+[`examples/iteration.cpp`](examples/iteration.cpp) is a runnable tour.
 
 `serialize` re-escapes text (`& < >`) and attribute values (`& < "`),
 emits childless elements self-closed, and the result is
