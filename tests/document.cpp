@@ -132,24 +132,26 @@ void empty_symbol() { }
 
 namespace bracket_tests {
 
-using namespace ctxml::literals;
 
 constexpr auto cfg = ctxml::parse<
     R"(<service name="demo"><endpoint host="a" tls="true"/><endpoint host="b"/><motd>hi</motd></service>)">();
 
 // [] is get (first child element with the tag) or child (by position),
 // with the tag or index carried in the argument's type
-static_assert(cfg["endpoint"_k].attribute<"host">() == "a"sv);
-static_assert(cfg["motd"_k].text() == "hi"sv);
-static_assert(cfg[2_i].name() == "motd"sv);
-static_assert(cfg[0_i].has_attribute<"tls">());
+static_assert(cfg["endpoint"].attribute("host") == "a"sv);
+static_assert(cfg["motd"].text() == "hi"sv);
+static_assert(cfg[2].name() == "motd"sv);
+static_assert(cfg[0].has_attribute("tls"));
+static_assert(cfg.contains("endpoint"));
+static_assert(!cfg.contains("missing"));
+static_assert(cfg["missing"][0]["still-missing"].name().empty());
 
 // name TYPES work as [] arguments in any standard
 static_assert([] {
 	size_t found = 0;
 	ctxml::for_each_child(cfg, [&](auto child) {
 		if constexpr (decltype(child)::type == ctxml::kind::element) {
-			if (cfg[typename decltype(child)::name_type{}].name() == child.name()) {
+			if (cfg[child.name()].name() == child.name()) {
 				++found;
 			}
 		}
@@ -174,8 +176,8 @@ static_assert([] {
 
 static_assert([] {
 	for (const auto & n : cfg) {
-		if (n.name == "motd") {
-			return n.text == "hi"; // elements view their direct text
+		if (n.name() == "motd") {
+			return n.text() == "hi"; // elements view their direct text
 		}
 	}
 	return false;
@@ -187,7 +189,7 @@ static_assert([] {
 	size_t text_chars = 0;
 	for (const auto & n : mixed) {
 		if (n.type == ctxml::kind::text) {
-			text_chars += n.text.size();
+			text_chars += n.text().size();
 		}
 	}
 	return text_chars;
@@ -196,7 +198,7 @@ static_assert([] {
 // attributes as an iterable array of name/value views
 static_assert([] {
 	size_t chars = 0;
-	for (const auto & a : ctxml::attributes(cfg["endpoint"_k])) {
+	for (const auto & a : ctxml::attributes(cfg["endpoint"])) {
 		chars += a.name.size() + a.value.size();
 	}
 	return chars;

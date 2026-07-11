@@ -1,6 +1,6 @@
-// Brackets and iteration: operator[] is get/child spelled the familiar
-// way - the tag or index rides in the argument's TYPE - and begin/end
-// give an element's children uniform views (kind + name + text) out of
+// Brackets and iteration: operator[] accepts ordinary tags and indexes,
+// returning uniform views; begin/end give an element's children those
+// same views (kind + name + text) out of
 // static storage, so range-for and <algorithm> work; attributes(...)
 // does the same for its attributes.
 //
@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <iostream>
 
-using namespace ctxml::literals;
 
 constexpr auto feed = ctxml::parse<R"(<feed version="1.0" updated="2026-07-11">
 	<title>release notes</title>
@@ -20,15 +19,15 @@ constexpr auto feed = ctxml::parse<R"(<feed version="1.0" updated="2026-07-11">
 
 // --- operator[]: get (first child with the tag) and child (by position)
 
-static_assert(feed["title"_k].text() == "release notes");
-static_assert(feed["entry"_k].attribute<"id">() == "1");
-static_assert(feed[2_i].attribute<"id">() == "2");
-static_assert(feed["entry"_k]["title"_k].text() == "Brackets");
+static_assert(feed["title"].text() == "release notes");
+static_assert(feed["entry"].attribute("id") == "1");
+static_assert(feed[2].attribute("id") == "2");
+static_assert(feed["entry"]["title"].text() == "Brackets");
 
 // --- iteration: children and attributes as uniform views
 
 static_assert(std::count_if(begin(feed), end(feed),
-    [](const ctxml::node_view & n) { return n.name == "entry"; }) == 2);
+    [](const ctxml::node_view & n) { return n.name() == "entry"; }) == 2);
 
 static_assert(ctxml::attributes(feed).size() == 2);
 
@@ -47,7 +46,7 @@ int main() {
 	// walk any element's children: views are plain kinds and string_views
 	for (const auto & n : feed) {
 		if (n.type == ctxml::kind::element) {
-			std::cout << "<" << n.name << "> " << n.text << "\n";
+			std::cout << "<" << n.name() << "> " << n.text() << "\n";
 		}
 	}
 

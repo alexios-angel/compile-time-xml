@@ -24,26 +24,11 @@
 
 namespace ctxml {
 
-CTLL_EXPORT struct node_view {
-	ctxml::kind type;
-	std::string_view name; // elements: the tag; text nodes: empty
-	std::string_view text; // elements: their direct text; text nodes: the content
-};
-
-CTLL_EXPORT struct attribute_view {
-	std::string_view name;
-	std::string_view value;
-};
+CTLL_EXPORT constexpr attribute_range attributes(node_view node) noexcept {
+	return node.attributes();
+}
 
 namespace detail {
-
-template <typename Node> constexpr node_view view_of() noexcept {
-	if constexpr (Node::type == kind::element) {
-		return {kind::element, Node::name(), Node::text()};
-	} else {
-		return {kind::text, std::string_view{}, Node::view()};
-	}
-}
 
 // one static array per element type, materialized only when iterated
 template <typename... Children> struct child_views {
@@ -54,6 +39,26 @@ template <typename... Attributes> struct attr_views {
 	static constexpr std::array<attribute_view, sizeof...(Attributes)> data{
 	    attribute_view{Attributes::name_type::view(), Attributes::value_type::view()}...};
 };
+
+template <typename Node> struct child_views_for_impl;
+template <typename Name, typename... Attributes, typename... Children>
+struct child_views_for_impl<element<Name, ctll::list<Attributes...>, Children...>> : child_views<Children...> {};
+template <typename Node> using child_views_for = child_views_for_impl<Node>;
+
+template <typename Node> struct attr_views_for_impl;
+template <typename Name, typename... Attributes, typename... Children>
+struct attr_views_for_impl<element<Name, ctll::list<Attributes...>, Children...>> : attr_views<Attributes...> {};
+template <typename Node> using attr_views_for = attr_views_for_impl<Node>;
+
+template <typename Node> constexpr node_view view_of() noexcept {
+	if constexpr (Node::type == kind::element) {
+		return {kind::element, Node::name(), Node::text(),
+		        child_views_for<Node>::data.data(), attr_views_for<Node>::data.data(),
+		        Node::child_count(), Node::attribute_count()};
+	} else {
+		return {kind::text, {}, Node::view()};
+	}
+}
 
 } // namespace detail
 

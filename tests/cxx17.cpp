@@ -16,17 +16,16 @@ static_assert(doc.template get<host_tag>().text() == std::string_view{"x"});
 
 void empty_symbol() { }
 
-// operator[] needs no C++20: name types and _i indexes work as-is
-using namespace ctxml::literals;
+// operator[] needs no C++20: ordinary strings and integer indexes work as-is
 
-static_assert(doc[0_i].name() == std::string_view{"host"});
-static_assert(doc[typename decltype(doc.template child<0>())::name_type{}].text() == std::string_view{"x"});
+static_assert(doc[0].name() == std::string_view{"host"});
+static_assert(doc["host"].text() == std::string_view{"x"});
 
 // iteration: uniform views, range-for, constexpr
 static_assert([] {
 	size_t n = 0;
 	for (const auto & node : doc) {
-		n += node.name.size() + node.text.size();
+		n += node.name().size() + node.text().size();
 	}
 	return n;
 }() == 4 + 1);

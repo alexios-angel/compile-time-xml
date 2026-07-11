@@ -24331,7 +24331,6 @@ CTLL_EXPORT template <typename Traits, size_t N> std::basic_ostream<char, Traits
 #include <cstddef>
 #include <string_view>
 #include <type_traits>
-#include <utility>
 #endif
 
 // The document types a parse produces. The whole document is a TYPE -
@@ -24391,7 +24390,65 @@ template <typename Name, typename Value> struct attribute {
 	using value_type = Value;
 };
 
+struct attribute_view {
+	std::string_view name;
+	std::string_view value;
+};
+
+struct attribute_range {
+	const attribute_view * data = nullptr;
+	size_t count = 0;
+	constexpr const attribute_view * begin() const noexcept { return data; }
+	constexpr const attribute_view * end() const noexcept { return data + (data ? count : 0); }
+};
+
+struct node_view {
+	ctxml::kind type = kind::text;
+	std::string_view tag{};
+	std::string_view content{};
+	const node_view * child_data = nullptr;
+	const attribute_view * attribute_data = nullptr;
+	size_t children = 0;
+	size_t attrs = 0;
+
+	constexpr std::string_view name() const noexcept { return tag; }
+	constexpr std::string_view text() const noexcept { return content; }
+	constexpr size_t child_count() const noexcept { return children; }
+	constexpr bool empty() const noexcept { return children == 0; }
+	constexpr node_view operator[](std::string_view name) const noexcept {
+		for (size_t i = 0; i < children; ++i)
+			if (child_data[i].type == kind::element && child_data[i].tag == name) return child_data[i];
+		return {};
+	}
+	constexpr node_view operator[](size_t index) const noexcept {
+		return index < children ? child_data[index] : node_view{};
+	}
+	constexpr bool contains(std::string_view name) const noexcept {
+		for (size_t i = 0; i < children; ++i)
+			if (child_data[i].type == kind::element && child_data[i].tag == name) return true;
+		return false;
+	}
+	constexpr size_t count(std::string_view name) const noexcept {
+		size_t n = 0;
+		for (size_t i = 0; i < children; ++i) n += child_data[i].type == kind::element && child_data[i].tag == name;
+		return n;
+	}
+	constexpr bool has_attribute(std::string_view name) const noexcept {
+		for (size_t i = 0; i < attrs; ++i) if (attribute_data[i].name == name) return true;
+		return false;
+	}
+	constexpr std::string_view attribute(std::string_view name) const noexcept {
+		for (size_t i = 0; i < attrs; ++i) if (attribute_data[i].name == name) return attribute_data[i].value;
+		return {};
+	}
+	constexpr const node_view * begin() const noexcept { return child_data; }
+	constexpr const node_view * end() const noexcept { return child_data + (child_data ? children : 0); }
+	constexpr attribute_range attributes() const noexcept { return {attribute_data, attrs}; }
+};
+
 namespace detail {
+
+template <typename Node> constexpr node_view view_of() noexcept;
 
 // compare a compile-time key against a text type's content
 #if CTLL_CNTTP_COMPILER_CHECK
@@ -24557,17 +24614,10 @@ struct element<Name, ctll::list<Attributes...>, Children...> {
 	}
 #endif
 
-	// get and child, spelled with brackets: the tag is a text TYPE, so
-	// this works with the "..."_k literal (C++20) and with any name type
-	// in any standard; an integral constant (1_i) picks a child by position
-	template <auto... Chars> constexpr auto operator[](ctxml::text<Chars...>) const noexcept {
-		static_assert((child_name_matches<ctxml::text<Chars...>, Children>() || ...),
-		              "ctxml: no child element with this tag");
-		return find_child_by_name<ctxml::text<Chars...>, Children...>();
-	}
-	template <size_t Index> constexpr auto operator[](std::integral_constant<size_t, Index>) const noexcept {
-		return child<Index>();
-	}
+	constexpr node_view operator[](std::string_view tag) const noexcept { return detail::view_of<element>()[tag]; }
+	constexpr node_view operator[](size_t index) const noexcept { return detail::view_of<element>()[index]; }
+	constexpr bool contains(std::string_view tag) const noexcept { return detail::view_of<element>().contains(tag); }
+	constexpr size_t count(std::string_view tag) const noexcept { return detail::view_of<element>().count(tag); }
 
 private:
 #if CTLL_CNTTP_COMPILER_CHECK
@@ -24606,21 +24656,6 @@ private:
 		}
 	}
 
-	template <typename Tag, typename Child> static constexpr bool child_name_matches() noexcept {
-		if constexpr (Child::type == kind::element) {
-			return Tag::view() == Child::name_type::view();
-		} else {
-			return false;
-		}
-	}
-
-	template <typename Tag, typename Head, typename... Tail> static constexpr auto find_child_by_name() noexcept {
-		if constexpr (child_name_matches<Tag, Head>()) {
-			return Head{};
-		} else {
-			return find_child_by_name<Tag, Tail...>();
-		}
-	}
 };
 
 // compile-time iteration over an element's children (each with its own
@@ -24634,46 +24669,6 @@ CTLL_EXPORT template <typename F, typename Name, typename... Attributes, typenam
 constexpr void for_each_attribute(element<Name, ctll::list<Attributes...>, Children...>, F && f) {
 	(f(typename Attributes::name_type{}, typename Attributes::value_type{}), ...);
 }
-
-// --- literal suffixes: tags and indexes as types, for operator[]
-
-namespace detail {
-
-#if CTLL_CNTTP_COMPILER_CHECK
-template <ctll::fixed_string S, size_t... I> constexpr auto lift_key(std::index_sequence<I...>) noexcept {
-	return text<static_cast<char>(S[I])...>{};
-}
-#endif
-
-template <char... Digits> constexpr size_t parse_index() noexcept {
-	constexpr char digits[]{Digits...};
-	size_t value = 0;
-	for (const char c : digits) {
-		if (c != '\'') { // the digit separator
-			value = value * 10 + static_cast<size_t>(c - '0');
-		}
-	}
-	return value;
-}
-
-} // namespace detail
-
-// opt in with `using namespace ctxml::literals`
-namespace literals {
-
-#if CTLL_CNTTP_COMPILER_CHECK
-// "name"_k: a tag as a text type - doc["endpoint"_k]
-CTLL_EXPORT template <ctll::fixed_string S> constexpr auto operator""_k() noexcept {
-	return detail::lift_key<S>(std::make_index_sequence<S.size()>{});
-}
-#endif
-
-// 1_i: an index as an integral constant - doc[1_i]
-CTLL_EXPORT template <char... Digits> constexpr auto operator""_i() noexcept {
-	return std::integral_constant<size_t, detail::parse_index<Digits...>()>{};
-}
-
-} // namespace literals
 
 } // namespace ctxml
 
@@ -37012,7 +37007,6 @@ CTLL_EXPORT template <typename Traits, size_t N> std::basic_ostream<char, Traits
 #include <cstddef>
 #include <string_view>
 #include <type_traits>
-#include <utility>
 #endif
 
 // The document types a parse produces. The whole document is a TYPE -
@@ -37072,7 +37066,65 @@ template <typename Name, typename Value> struct attribute {
 	using value_type = Value;
 };
 
+struct attribute_view {
+	std::string_view name;
+	std::string_view value;
+};
+
+struct attribute_range {
+	const attribute_view * data = nullptr;
+	size_t count = 0;
+	constexpr const attribute_view * begin() const noexcept { return data; }
+	constexpr const attribute_view * end() const noexcept { return data + (data ? count : 0); }
+};
+
+struct node_view {
+	ctxml::kind type = kind::text;
+	std::string_view tag{};
+	std::string_view content{};
+	const node_view * child_data = nullptr;
+	const attribute_view * attribute_data = nullptr;
+	size_t children = 0;
+	size_t attrs = 0;
+
+	constexpr std::string_view name() const noexcept { return tag; }
+	constexpr std::string_view text() const noexcept { return content; }
+	constexpr size_t child_count() const noexcept { return children; }
+	constexpr bool empty() const noexcept { return children == 0; }
+	constexpr node_view operator[](std::string_view name) const noexcept {
+		for (size_t i = 0; i < children; ++i)
+			if (child_data[i].type == kind::element && child_data[i].tag == name) return child_data[i];
+		return {};
+	}
+	constexpr node_view operator[](size_t index) const noexcept {
+		return index < children ? child_data[index] : node_view{};
+	}
+	constexpr bool contains(std::string_view name) const noexcept {
+		for (size_t i = 0; i < children; ++i)
+			if (child_data[i].type == kind::element && child_data[i].tag == name) return true;
+		return false;
+	}
+	constexpr size_t count(std::string_view name) const noexcept {
+		size_t n = 0;
+		for (size_t i = 0; i < children; ++i) n += child_data[i].type == kind::element && child_data[i].tag == name;
+		return n;
+	}
+	constexpr bool has_attribute(std::string_view name) const noexcept {
+		for (size_t i = 0; i < attrs; ++i) if (attribute_data[i].name == name) return true;
+		return false;
+	}
+	constexpr std::string_view attribute(std::string_view name) const noexcept {
+		for (size_t i = 0; i < attrs; ++i) if (attribute_data[i].name == name) return attribute_data[i].value;
+		return {};
+	}
+	constexpr const node_view * begin() const noexcept { return child_data; }
+	constexpr const node_view * end() const noexcept { return child_data + (child_data ? children : 0); }
+	constexpr attribute_range attributes() const noexcept { return {attribute_data, attrs}; }
+};
+
 namespace detail {
+
+template <typename Node> constexpr node_view view_of() noexcept;
 
 // compare a compile-time key against a text type's content
 #if CTLL_CNTTP_COMPILER_CHECK
@@ -37238,17 +37290,10 @@ struct element<Name, ctll::list<Attributes...>, Children...> {
 	}
 #endif
 
-	// get and child, spelled with brackets: the tag is a text TYPE, so
-	// this works with the "..."_k literal (C++20) and with any name type
-	// in any standard; an integral constant (1_i) picks a child by position
-	template <auto... Chars> constexpr auto operator[](ctxml::text<Chars...>) const noexcept {
-		static_assert((child_name_matches<ctxml::text<Chars...>, Children>() || ...),
-		              "ctxml: no child element with this tag");
-		return find_child_by_name<ctxml::text<Chars...>, Children...>();
-	}
-	template <size_t Index> constexpr auto operator[](std::integral_constant<size_t, Index>) const noexcept {
-		return child<Index>();
-	}
+	constexpr node_view operator[](std::string_view tag) const noexcept { return detail::view_of<element>()[tag]; }
+	constexpr node_view operator[](size_t index) const noexcept { return detail::view_of<element>()[index]; }
+	constexpr bool contains(std::string_view tag) const noexcept { return detail::view_of<element>().contains(tag); }
+	constexpr size_t count(std::string_view tag) const noexcept { return detail::view_of<element>().count(tag); }
 
 private:
 #if CTLL_CNTTP_COMPILER_CHECK
@@ -37287,21 +37332,6 @@ private:
 		}
 	}
 
-	template <typename Tag, typename Child> static constexpr bool child_name_matches() noexcept {
-		if constexpr (Child::type == kind::element) {
-			return Tag::view() == Child::name_type::view();
-		} else {
-			return false;
-		}
-	}
-
-	template <typename Tag, typename Head, typename... Tail> static constexpr auto find_child_by_name() noexcept {
-		if constexpr (child_name_matches<Tag, Head>()) {
-			return Head{};
-		} else {
-			return find_child_by_name<Tag, Tail...>();
-		}
-	}
 };
 
 // compile-time iteration over an element's children (each with its own
@@ -37315,46 +37345,6 @@ CTLL_EXPORT template <typename F, typename Name, typename... Attributes, typenam
 constexpr void for_each_attribute(element<Name, ctll::list<Attributes...>, Children...>, F && f) {
 	(f(typename Attributes::name_type{}, typename Attributes::value_type{}), ...);
 }
-
-// --- literal suffixes: tags and indexes as types, for operator[]
-
-namespace detail {
-
-#if CTLL_CNTTP_COMPILER_CHECK
-template <ctll::fixed_string S, size_t... I> constexpr auto lift_key(std::index_sequence<I...>) noexcept {
-	return text<static_cast<char>(S[I])...>{};
-}
-#endif
-
-template <char... Digits> constexpr size_t parse_index() noexcept {
-	constexpr char digits[]{Digits...};
-	size_t value = 0;
-	for (const char c : digits) {
-		if (c != '\'') { // the digit separator
-			value = value * 10 + static_cast<size_t>(c - '0');
-		}
-	}
-	return value;
-}
-
-} // namespace detail
-
-// opt in with `using namespace ctxml::literals`
-namespace literals {
-
-#if CTLL_CNTTP_COMPILER_CHECK
-// "name"_k: a tag as a text type - doc["endpoint"_k]
-CTLL_EXPORT template <ctll::fixed_string S> constexpr auto operator""_k() noexcept {
-	return detail::lift_key<S>(std::make_index_sequence<S.size()>{});
-}
-#endif
-
-// 1_i: an index as an integral constant - doc[1_i]
-CTLL_EXPORT template <char... Digits> constexpr auto operator""_i() noexcept {
-	return std::integral_constant<size_t, detail::parse_index<Digits...>()>{};
-}
-
-} // namespace literals
 
 } // namespace ctxml
 
@@ -38183,7 +38173,6 @@ CTLL_EXPORT template <typename Traits, size_t N> std::basic_ostream<char, Traits
 #include <cstddef>
 #include <string_view>
 #include <type_traits>
-#include <utility>
 #endif
 
 // The document types a parse produces. The whole document is a TYPE -
@@ -38243,7 +38232,65 @@ template <typename Name, typename Value> struct attribute {
 	using value_type = Value;
 };
 
+struct attribute_view {
+	std::string_view name;
+	std::string_view value;
+};
+
+struct attribute_range {
+	const attribute_view * data = nullptr;
+	size_t count = 0;
+	constexpr const attribute_view * begin() const noexcept { return data; }
+	constexpr const attribute_view * end() const noexcept { return data + (data ? count : 0); }
+};
+
+struct node_view {
+	ctxml::kind type = kind::text;
+	std::string_view tag{};
+	std::string_view content{};
+	const node_view * child_data = nullptr;
+	const attribute_view * attribute_data = nullptr;
+	size_t children = 0;
+	size_t attrs = 0;
+
+	constexpr std::string_view name() const noexcept { return tag; }
+	constexpr std::string_view text() const noexcept { return content; }
+	constexpr size_t child_count() const noexcept { return children; }
+	constexpr bool empty() const noexcept { return children == 0; }
+	constexpr node_view operator[](std::string_view name) const noexcept {
+		for (size_t i = 0; i < children; ++i)
+			if (child_data[i].type == kind::element && child_data[i].tag == name) return child_data[i];
+		return {};
+	}
+	constexpr node_view operator[](size_t index) const noexcept {
+		return index < children ? child_data[index] : node_view{};
+	}
+	constexpr bool contains(std::string_view name) const noexcept {
+		for (size_t i = 0; i < children; ++i)
+			if (child_data[i].type == kind::element && child_data[i].tag == name) return true;
+		return false;
+	}
+	constexpr size_t count(std::string_view name) const noexcept {
+		size_t n = 0;
+		for (size_t i = 0; i < children; ++i) n += child_data[i].type == kind::element && child_data[i].tag == name;
+		return n;
+	}
+	constexpr bool has_attribute(std::string_view name) const noexcept {
+		for (size_t i = 0; i < attrs; ++i) if (attribute_data[i].name == name) return true;
+		return false;
+	}
+	constexpr std::string_view attribute(std::string_view name) const noexcept {
+		for (size_t i = 0; i < attrs; ++i) if (attribute_data[i].name == name) return attribute_data[i].value;
+		return {};
+	}
+	constexpr const node_view * begin() const noexcept { return child_data; }
+	constexpr const node_view * end() const noexcept { return child_data + (child_data ? children : 0); }
+	constexpr attribute_range attributes() const noexcept { return {attribute_data, attrs}; }
+};
+
 namespace detail {
+
+template <typename Node> constexpr node_view view_of() noexcept;
 
 // compare a compile-time key against a text type's content
 #if CTLL_CNTTP_COMPILER_CHECK
@@ -38409,17 +38456,10 @@ struct element<Name, ctll::list<Attributes...>, Children...> {
 	}
 #endif
 
-	// get and child, spelled with brackets: the tag is a text TYPE, so
-	// this works with the "..."_k literal (C++20) and with any name type
-	// in any standard; an integral constant (1_i) picks a child by position
-	template <auto... Chars> constexpr auto operator[](ctxml::text<Chars...>) const noexcept {
-		static_assert((child_name_matches<ctxml::text<Chars...>, Children>() || ...),
-		              "ctxml: no child element with this tag");
-		return find_child_by_name<ctxml::text<Chars...>, Children...>();
-	}
-	template <size_t Index> constexpr auto operator[](std::integral_constant<size_t, Index>) const noexcept {
-		return child<Index>();
-	}
+	constexpr node_view operator[](std::string_view tag) const noexcept { return detail::view_of<element>()[tag]; }
+	constexpr node_view operator[](size_t index) const noexcept { return detail::view_of<element>()[index]; }
+	constexpr bool contains(std::string_view tag) const noexcept { return detail::view_of<element>().contains(tag); }
+	constexpr size_t count(std::string_view tag) const noexcept { return detail::view_of<element>().count(tag); }
 
 private:
 #if CTLL_CNTTP_COMPILER_CHECK
@@ -38458,21 +38498,6 @@ private:
 		}
 	}
 
-	template <typename Tag, typename Child> static constexpr bool child_name_matches() noexcept {
-		if constexpr (Child::type == kind::element) {
-			return Tag::view() == Child::name_type::view();
-		} else {
-			return false;
-		}
-	}
-
-	template <typename Tag, typename Head, typename... Tail> static constexpr auto find_child_by_name() noexcept {
-		if constexpr (child_name_matches<Tag, Head>()) {
-			return Head{};
-		} else {
-			return find_child_by_name<Tag, Tail...>();
-		}
-	}
 };
 
 // compile-time iteration over an element's children (each with its own
@@ -38486,46 +38511,6 @@ CTLL_EXPORT template <typename F, typename Name, typename... Attributes, typenam
 constexpr void for_each_attribute(element<Name, ctll::list<Attributes...>, Children...>, F && f) {
 	(f(typename Attributes::name_type{}, typename Attributes::value_type{}), ...);
 }
-
-// --- literal suffixes: tags and indexes as types, for operator[]
-
-namespace detail {
-
-#if CTLL_CNTTP_COMPILER_CHECK
-template <ctll::fixed_string S, size_t... I> constexpr auto lift_key(std::index_sequence<I...>) noexcept {
-	return text<static_cast<char>(S[I])...>{};
-}
-#endif
-
-template <char... Digits> constexpr size_t parse_index() noexcept {
-	constexpr char digits[]{Digits...};
-	size_t value = 0;
-	for (const char c : digits) {
-		if (c != '\'') { // the digit separator
-			value = value * 10 + static_cast<size_t>(c - '0');
-		}
-	}
-	return value;
-}
-
-} // namespace detail
-
-// opt in with `using namespace ctxml::literals`
-namespace literals {
-
-#if CTLL_CNTTP_COMPILER_CHECK
-// "name"_k: a tag as a text type - doc["endpoint"_k]
-CTLL_EXPORT template <ctll::fixed_string S> constexpr auto operator""_k() noexcept {
-	return detail::lift_key<S>(std::make_index_sequence<S.size()>{});
-}
-#endif
-
-// 1_i: an index as an integral constant - doc[1_i]
-CTLL_EXPORT template <char... Digits> constexpr auto operator""_i() noexcept {
-	return std::integral_constant<size_t, detail::parse_index<Digits...>()>{};
-}
-
-} // namespace literals
 
 } // namespace ctxml
 
@@ -39170,7 +39155,6 @@ CTLL_EXPORT template <typename Traits, size_t N> std::basic_ostream<char, Traits
 #include <cstddef>
 #include <string_view>
 #include <type_traits>
-#include <utility>
 #endif
 
 // The document types a parse produces. The whole document is a TYPE -
@@ -39230,7 +39214,65 @@ template <typename Name, typename Value> struct attribute {
 	using value_type = Value;
 };
 
+struct attribute_view {
+	std::string_view name;
+	std::string_view value;
+};
+
+struct attribute_range {
+	const attribute_view * data = nullptr;
+	size_t count = 0;
+	constexpr const attribute_view * begin() const noexcept { return data; }
+	constexpr const attribute_view * end() const noexcept { return data + (data ? count : 0); }
+};
+
+struct node_view {
+	ctxml::kind type = kind::text;
+	std::string_view tag{};
+	std::string_view content{};
+	const node_view * child_data = nullptr;
+	const attribute_view * attribute_data = nullptr;
+	size_t children = 0;
+	size_t attrs = 0;
+
+	constexpr std::string_view name() const noexcept { return tag; }
+	constexpr std::string_view text() const noexcept { return content; }
+	constexpr size_t child_count() const noexcept { return children; }
+	constexpr bool empty() const noexcept { return children == 0; }
+	constexpr node_view operator[](std::string_view name) const noexcept {
+		for (size_t i = 0; i < children; ++i)
+			if (child_data[i].type == kind::element && child_data[i].tag == name) return child_data[i];
+		return {};
+	}
+	constexpr node_view operator[](size_t index) const noexcept {
+		return index < children ? child_data[index] : node_view{};
+	}
+	constexpr bool contains(std::string_view name) const noexcept {
+		for (size_t i = 0; i < children; ++i)
+			if (child_data[i].type == kind::element && child_data[i].tag == name) return true;
+		return false;
+	}
+	constexpr size_t count(std::string_view name) const noexcept {
+		size_t n = 0;
+		for (size_t i = 0; i < children; ++i) n += child_data[i].type == kind::element && child_data[i].tag == name;
+		return n;
+	}
+	constexpr bool has_attribute(std::string_view name) const noexcept {
+		for (size_t i = 0; i < attrs; ++i) if (attribute_data[i].name == name) return true;
+		return false;
+	}
+	constexpr std::string_view attribute(std::string_view name) const noexcept {
+		for (size_t i = 0; i < attrs; ++i) if (attribute_data[i].name == name) return attribute_data[i].value;
+		return {};
+	}
+	constexpr const node_view * begin() const noexcept { return child_data; }
+	constexpr const node_view * end() const noexcept { return child_data + (child_data ? children : 0); }
+	constexpr attribute_range attributes() const noexcept { return {attribute_data, attrs}; }
+};
+
 namespace detail {
+
+template <typename Node> constexpr node_view view_of() noexcept;
 
 // compare a compile-time key against a text type's content
 #if CTLL_CNTTP_COMPILER_CHECK
@@ -39396,17 +39438,10 @@ struct element<Name, ctll::list<Attributes...>, Children...> {
 	}
 #endif
 
-	// get and child, spelled with brackets: the tag is a text TYPE, so
-	// this works with the "..."_k literal (C++20) and with any name type
-	// in any standard; an integral constant (1_i) picks a child by position
-	template <auto... Chars> constexpr auto operator[](ctxml::text<Chars...>) const noexcept {
-		static_assert((child_name_matches<ctxml::text<Chars...>, Children>() || ...),
-		              "ctxml: no child element with this tag");
-		return find_child_by_name<ctxml::text<Chars...>, Children...>();
-	}
-	template <size_t Index> constexpr auto operator[](std::integral_constant<size_t, Index>) const noexcept {
-		return child<Index>();
-	}
+	constexpr node_view operator[](std::string_view tag) const noexcept { return detail::view_of<element>()[tag]; }
+	constexpr node_view operator[](size_t index) const noexcept { return detail::view_of<element>()[index]; }
+	constexpr bool contains(std::string_view tag) const noexcept { return detail::view_of<element>().contains(tag); }
+	constexpr size_t count(std::string_view tag) const noexcept { return detail::view_of<element>().count(tag); }
 
 private:
 #if CTLL_CNTTP_COMPILER_CHECK
@@ -39445,21 +39480,6 @@ private:
 		}
 	}
 
-	template <typename Tag, typename Child> static constexpr bool child_name_matches() noexcept {
-		if constexpr (Child::type == kind::element) {
-			return Tag::view() == Child::name_type::view();
-		} else {
-			return false;
-		}
-	}
-
-	template <typename Tag, typename Head, typename... Tail> static constexpr auto find_child_by_name() noexcept {
-		if constexpr (child_name_matches<Tag, Head>()) {
-			return Head{};
-		} else {
-			return find_child_by_name<Tag, Tail...>();
-		}
-	}
 };
 
 // compile-time iteration over an element's children (each with its own
@@ -39473,46 +39493,6 @@ CTLL_EXPORT template <typename F, typename Name, typename... Attributes, typenam
 constexpr void for_each_attribute(element<Name, ctll::list<Attributes...>, Children...>, F && f) {
 	(f(typename Attributes::name_type{}, typename Attributes::value_type{}), ...);
 }
-
-// --- literal suffixes: tags and indexes as types, for operator[]
-
-namespace detail {
-
-#if CTLL_CNTTP_COMPILER_CHECK
-template <ctll::fixed_string S, size_t... I> constexpr auto lift_key(std::index_sequence<I...>) noexcept {
-	return text<static_cast<char>(S[I])...>{};
-}
-#endif
-
-template <char... Digits> constexpr size_t parse_index() noexcept {
-	constexpr char digits[]{Digits...};
-	size_t value = 0;
-	for (const char c : digits) {
-		if (c != '\'') { // the digit separator
-			value = value * 10 + static_cast<size_t>(c - '0');
-		}
-	}
-	return value;
-}
-
-} // namespace detail
-
-// opt in with `using namespace ctxml::literals`
-namespace literals {
-
-#if CTLL_CNTTP_COMPILER_CHECK
-// "name"_k: a tag as a text type - doc["endpoint"_k]
-CTLL_EXPORT template <ctll::fixed_string S> constexpr auto operator""_k() noexcept {
-	return detail::lift_key<S>(std::make_index_sequence<S.size()>{});
-}
-#endif
-
-// 1_i: an index as an integral constant - doc[1_i]
-CTLL_EXPORT template <char... Digits> constexpr auto operator""_i() noexcept {
-	return std::integral_constant<size_t, detail::parse_index<Digits...>()>{};
-}
-
-} // namespace literals
 
 } // namespace ctxml
 
@@ -39540,26 +39520,11 @@ CTLL_EXPORT template <char... Digits> constexpr auto operator""_i() noexcept {
 
 namespace ctxml {
 
-CTLL_EXPORT struct node_view {
-	ctxml::kind type;
-	std::string_view name; // elements: the tag; text nodes: empty
-	std::string_view text; // elements: their direct text; text nodes: the content
-};
-
-CTLL_EXPORT struct attribute_view {
-	std::string_view name;
-	std::string_view value;
-};
+CTLL_EXPORT constexpr attribute_range attributes(node_view node) noexcept {
+	return node.attributes();
+}
 
 namespace detail {
-
-template <typename Node> constexpr node_view view_of() noexcept {
-	if constexpr (Node::type == kind::element) {
-		return {kind::element, Node::name(), Node::text()};
-	} else {
-		return {kind::text, std::string_view{}, Node::view()};
-	}
-}
 
 // one static array per element type, materialized only when iterated
 template <typename... Children> struct child_views {
@@ -39570,6 +39535,26 @@ template <typename... Attributes> struct attr_views {
 	static constexpr std::array<attribute_view, sizeof...(Attributes)> data{
 	    attribute_view{Attributes::name_type::view(), Attributes::value_type::view()}...};
 };
+
+template <typename Node> struct child_views_for_impl;
+template <typename Name, typename... Attributes, typename... Children>
+struct child_views_for_impl<element<Name, ctll::list<Attributes...>, Children...>> : child_views<Children...> {};
+template <typename Node> using child_views_for = child_views_for_impl<Node>;
+
+template <typename Node> struct attr_views_for_impl;
+template <typename Name, typename... Attributes, typename... Children>
+struct attr_views_for_impl<element<Name, ctll::list<Attributes...>, Children...>> : attr_views<Attributes...> {};
+template <typename Node> using attr_views_for = attr_views_for_impl<Node>;
+
+template <typename Node> constexpr node_view view_of() noexcept {
+	if constexpr (Node::type == kind::element) {
+		return {kind::element, Node::name(), Node::text(),
+		        child_views_for<Node>::data.data(), attr_views_for<Node>::data.data(),
+		        Node::child_count(), Node::attribute_count()};
+	} else {
+		return {kind::text, {}, Node::view()};
+	}
+}
 
 } // namespace detail
 

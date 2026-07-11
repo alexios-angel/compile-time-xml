@@ -76,7 +76,7 @@ nodes:
 
 | Type | Accessors |
 |------|-----------|
-| `element<name, attrs, children...>` | `name()`, `attribute<"key">()`, `has_attribute<"key">()`, `attribute_count()`, positional `attribute_name<I>()` / `attribute_value<I>()`, `get<"tag">()` / `["tag"_k]` (first matching child element), `contains<"tag">()`, `count<"tag">()`, `child<I>()` / `[N_i]`, `child_count()`, `empty()`, `text()` |
+| `element<name, attrs, children...>` | `name()`, `attribute<"key">()`, `has_attribute<"key">()`, `attribute_count()`, positional `attribute_name<I>()` / `attribute_value<I>()`, `get<"tag">()` / `["tag"]` (first matching child element), `contains<"tag">()`, `count<"tag">()`, `child<I>()` / `[N]`, `child_count()`, `empty()`, `text()` |
 | `text<chars...>` | `view()`, `c_str()` (null-terminated), `size()`, `empty()`, `==` with `std::string_view` |
 
 Every type carries `static constexpr ctxml::kind type` for
@@ -95,29 +95,27 @@ static_assert(ctxml::serialize(ctxml::parse<"<a  x = '1' >hi<b/></a>">())
 Brackets and iteration:
 
 ```c++
-using namespace ctxml::literals;
 
-doc["endpoint"_k];             // get<"endpoint">(), spelled with brackets
-doc[2_i];                      // child<2>(): the index rides in the argument's TYPE
-doc["endpoint"_k].attribute<"host">();
+doc["endpoint"];             // first matching child, as a uniform node_view
+doc[2];                      // child at position 2, as a uniform node_view
+doc["endpoint"].attribute("host");
 
 // begin/end yield uniform views (kind + name + text) from static storage,
 // so range-for and algorithms work - in constexpr evaluation included:
 for (const auto & n : doc) {
     n.type;   // ctxml::kind::element or kind::text
-    n.name;   // elements: the tag; text nodes: empty
-    n.text;   // elements: their direct text; text nodes: the content
+    n.name(); // elements: the tag; text nodes: empty
+    n.text(); // elements: their direct text; text nodes: the content
 }
 for (const auto & a : ctxml::attributes(doc)) {
     a.name, a.value;   // std::string_views
 }
 ```
 
-`operator[]` is `get`/`child` under a different spelling: children have
-distinct types, so the tag or index must be a *type* — `"..."_k` (C++20)
-or any `text` name type, and `N_i` for positions (both work in C++17).
-Iterators hand out *views* for the same reason; when you need the child
-itself, with its own accessors, `for_each_child` is the tool. The
+Children have distinct types, so a runtime tag or index cannot return the
+child itself. `operator[]` accepts an ordinary string or integer and returns
+a uniform `node_view`; when you need the child itself, with its typed
+accessors, use `get<...>()`, `child<I>()`, or `for_each_child`. The
 records are `node_view` and `attribute_view`
 ([`views.hpp`](include/ctxml/views.hpp)), and
 [`examples/iteration.cpp`](examples/iteration.cpp) is a runnable tour.
