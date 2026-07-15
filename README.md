@@ -205,9 +205,12 @@ clang:  -fconstexpr-steps=500000000 -fconstexpr-depth=1024 -fbracket-depth=2048
 gcc:    -fconstexpr-ops-limit=3000000000 -fconstexpr-loop-limit=10000000 -fconstexpr-depth=1024
 ```
 
-The only generated parse table left in the tree is ctlark's own
-`lark.hpp` (the grammar of the Lark grammar language); regenerate it
-after editing `lark.gram` with `make regrammar`.
+ctlark and ctll come in as a git submodule
+(`external/compile-time-lark` — clone with `--recurse-submodules` or
+run `git submodule update --init`); never edit under `external/`. The
+build adds the submodule's include directories so the headers'
+relative `"../ctlark.hpp"`-style includes resolve, and the CMake
+install flattens everything back to `include/{ctxml,ctlark,ctll}`.
 
 ## Building and integrating
 
@@ -236,8 +239,10 @@ TGZ/ZIP archives (plus DEB/RPM where the tooling exists), and
 (experimental; needs CMake 3.30+, a modules-capable toolchain and
 `import std`).
 
-**No build system:** add `include/` to your include path, or copy the
-amalgamated [`single-header/ctxml.hpp`](single-header/ctxml.hpp)
+**No build system:** add `include/` plus the submodule's
+`external/compile-time-lark/include` (and its `ctlark`/`ctll`
+subdirectories) to your include path, or copy the amalgamated
+[`single-header/ctxml.hpp`](single-header/ctxml.hpp)
 (regenerate with `make single-header`, which needs the
 [quom](https://pypi.org/project/quom/) tool).
 
@@ -247,6 +252,7 @@ in [`examples/`](examples/).
 Run the tests (compilation is the test — the suite is `static_assert`s):
 
 ```bash
+git submodule update --init            # ctlark + ctll (once, after cloning)
 make CXX=clang++                       # C++20
 make CXX=clang++ CXX_STANDARD=17
 # or through CMake/CTest:

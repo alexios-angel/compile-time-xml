@@ -27,7 +27,7 @@ result. gcc uses `include/ctxml.hpp.gch`; clang uses `ctxml.pch` (`-include-pch`
 - `include/ctxml/types.hpp` — `element` / `text` node types, `kind` enum, accessors.
 - `include/ctxml/views.hpp` — `node_view` / `attribute_view` (uniform runtime views for `operator[]`, iteration).
 - `include/ctxml/serialize.hpp` — `serialize()` back to minified XML.
-- `include/ctlark/`, `include/ctll/` + `ctlark.hpp`, `ctll.hpp` — **vendored** sublibraries (see Vendoring).
+- `external/compile-time-lark/` — git SUBMODULE providing ctlark + ctll (see GOTCHAS).
 - `tests/` (`document.cpp`, `cxx17.cpp`), `examples/` (`config`, `introspection`, `iteration`, `wellformed`), `single-header/ctxml.hpp`, `ctxml.cppm` (module, `import std`).
 
 ## Public API (all `template <fixed_string input>`)
@@ -52,17 +52,21 @@ result. gcc uses `include/ctxml.hpp.gch`; clang uses `ctxml.pch` (`-include-pch`
 - CMake toggles: `CTXML_PCH`, `CTXML_BUILD_TESTS`, `CTXML_BUILD_EXAMPLES`, `CTXML_CXX_STANDARD` (default 20), `CTXML_MODULE`.
 
 ## GOTCHAS
-- **Vendored, do NOT edit `include/ctlark` or `include/ctll` here.**
-  `compile-time-lark` is the SOURCE OF TRUTH; these are byte-identical copies.
-  Edit the core there, then sync with `compile-time-lark/tools/sync-vendor.sh`,
-  verify with `diff -rq`, and regenerate the single-header.
+- **ctlark and ctll are a git SUBMODULE, never edit here:**
+  `external/compile-time-lark` — run `git submodule update --init` once
+  after cloning; bump by checking out a new commit inside the submodule and
+  committing the gitlink. The build adds `<sub>/include` AND
+  `<sub>/include/ctlark` / `<sub>/include/ctll` to the include path so the
+  headers' relative `"../ctlark.hpp"`-style includes resolve via the
+  quoted-include fallback; the CMake install flattens everything back to
+  include/{ctxml,ctlark,ctll}. Regenerate the single-header after bumps.
 - **single-header** — `make single-header` (needs `quom`); prepends `LICENSE`,
   amalgamates `include/ctxml.hpp` into `single-header/ctxml.hpp`.
 - **Grammar tables via Tablewright** — the only generated table left is
-  ctlark's own `include/ctlark/lark.hpp` (the grammar-of-grammars). Regenerate
-  after editing `include/ctlark/lark.gram` with `make regrammar` (needs the
-  `tablewright` tool + `python3` + `lark`). ctxml's own XML grammar is a plain
-  data string in `grammar.hpp` — no codegen step.
+  ctlark's own `lark.hpp` (the grammar-of-grammars), which lives in the
+  compile-time-lark submodule; regenerate it THERE (`make regrammar` in
+  compile-time-lark). ctxml's own XML grammar is a plain data string in
+  `grammar.hpp` — no codegen step.
 - **Attribution** — CTLL is Hana Dusíková's (via `notre`, from CTRE); the Lark
   grammar language is the lark-parser project's; ctxml's LL(1)-table lineage
   traces to Tablewright/Desatomat. Preserve `NOTICE` and `LICENSE` (Apache-2.0
