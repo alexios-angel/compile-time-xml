@@ -42,15 +42,20 @@ A well-defined subset of XML 1.0, aimed at data documents:
 
 * one root element; nested elements with attributes (`"` or `'`
   quoted) and self-closing tags
+
 * mixed text content; `text()` concatenates an element's direct text
+
 * the five predefined entities (`&lt; &gt; &amp; &apos; &quot;`) and
   decimal/hexadecimal character references, decoded to UTF-8 at parse
   time
+
 * `<!-- comments -->` (the spec's no-`--` rule enforced),
   `<![CDATA[ ... ]]>` sections (taken literally), and processing
   instructions / the XML declaration (skipped)
+
 * names take the ASCII name characters (`A-Za-z0-9_:.-`) plus every
   byte above `0x7F`, so UTF-8 tag and attribute names work
+
 * whitespace-only text between elements is dropped from the document
 
 **Well-formedness checks beyond the grammar**, both compile errors: a
